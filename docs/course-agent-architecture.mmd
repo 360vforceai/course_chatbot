@@ -1,0 +1,44 @@
+flowchart TD
+    U[Discord User] --> C[/ask question]
+    C --> D[Discord.js Client]
+    D --> H[interactionHandler.js]
+
+    H --> R{Rate limited?}
+    R -- Yes --> RL[Ephemeral cooldown response]
+    R -- No --> DEF[deferReply]
+
+    DEF --> M[memoryService.js]
+    M -->|Supabase configured| DB[(Supabase app_chat_history)]
+    M -->|No Supabase env| IM[(In-memory conversationStore)]
+
+    DEF --> KC[courseClient.js]
+    KC --> SK[Static Rutgers CS seed requirements]
+    KC --> SC[Relevant course search]
+    SK --> CTX[Course context block]
+    SC --> CTX
+
+    M --> HIST[Short-term history]
+    HIST --> AI[aiClient.js]
+    CTX --> AI
+    AI --> OAI[OpenAI Chat Completion]
+    OAI --> RESP[Course planning response]
+
+    RESP --> SPLIT[messageUtils.splitMessage]
+    SPLIT --> ER[editReply first chunk]
+    SPLIT --> FU[followUp remaining chunks]
+
+    RESP --> SAVE[saveMemoryAsync]
+    SAVE --> DB
+    SAVE --> IM
+
+    subgraph Future Integrations
+        WEBREG[WebReg / Schedule of Classes]
+        RMP[RateMyProfessor / difficulty data]
+        CATALOG[Rutgers catalog / Degree Navigator export]
+        RAG[Vector search / RAG store]
+    end
+
+    WEBREG -. replaces or extends .-> KC
+    RMP -. enriches .-> KC
+    CATALOG -. canonical requirements .-> KC
+    RAG -. retrieval layer .-> CTX

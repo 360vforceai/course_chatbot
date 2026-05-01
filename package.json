@@ -1,0 +1,28 @@
+{
+  "name": "course_chatbot",
+  "version": "1.0.0",
+  "description": "Rutgers Course Agent Discord bot",
+  "homepage": "https://github.com/360vforceai/course_chatbot#readme",
+  "bugs": {
+    "url": "https://github.com/360vforceai/course_chatbot/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/360vforceai/course_chatbot.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "src/bot/index.js",
+  "scripts": {
+    "start": "node src/bot/index.js",
+    "register": "node src/bot/register-commands.js",
+    "check": "node --check src/bot/index.js && node --check src/bot/interactionHandler.js && node --check src/bot/register-commands.js && node --check src/agents/aiClient.js && node --check src/agents/courseClient.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.104.1",
+    "discord.js": "^14.26.3",
+    "dotenv": "^17.4.2",
+    "openai": "^6.34.0"
+  }
+}
