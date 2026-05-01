@@ -13,6 +13,14 @@ This version turns the starter repo into a working `/ask` bot with:
 - Supabase memory when configured, with in-memory fallback when not configured
 - Mermaid architecture diagram in `docs/course-agent-architecture.mmd`
 
+## Commented handoff version
+
+This copy is the redesign branch with detailed inline comments added for team handoff. For a plain-English explanation of the file structure and request flow, see:
+
+```text
+docs/code-walkthrough.md
+```
+
 ## Setup
 
 ```bash

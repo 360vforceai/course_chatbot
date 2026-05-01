@@ -1,12 +1,28 @@
 /**
- * courseClient.js
+ * src/agents/courseClient.js
  *
- * Lightweight course knowledge layer for the Course Agent MVP.
- * Replace this static seed data with WebReg/catalog/RMP retrieval later.
+ * This file is the Course Agent's course-knowledge layer.
+ *
+ * In the final product, this layer should probably call real data sources:
+ * - Rutgers course catalog
+ * - WebReg / Schedule of Classes
+ * - Degree Navigator or official degree requirement data
+ * - professor / difficulty data if the team decides it is acceptable
+ *
+ * For the MVP redesign branch, this file intentionally uses static seed data.
+ * That gives the Discord bot something useful to retrieve from before the real
+ * integrations exist. The LLM should treat this as seed context, not live truth.
  */
 
 const logger = require('../utils/logger');
 
+/**
+ * Static requirement summary for the Rutgers NB CS BA/BS MVP.
+ *
+ * This is not meant to replace official advising. It is a seed source that helps
+ * the model answer basic questions while the team decides on official data
+ * sources. Keep the data conservative and avoid pretending it is complete.
+ */
 const REQUIREMENTS = {
   program: 'Rutgers New Brunswick Computer Science BA/BS seed requirements',
   declarationCore: [
@@ -39,6 +55,18 @@ const REQUIREMENTS = {
   ]
 };
 
+/**
+ * COURSE_SEED is the local mini knowledge base.
+ *
+ * Each course object is deliberately simple:
+ * - code: official-looking course code used for search and display
+ * - name: human-readable course name
+ * - type: rough category used for planning language
+ * - level: 100/200/300/400 used for filtering or future difficulty balancing
+ * - tags: keywords that help the search function match user intent
+ * - prereqs: optional prerequisite course codes
+ * - notes: short advising-style note passed into the LLM context
+ */
 const COURSE_SEED = [
   {
     code: '01:198:111',
@@ -182,6 +210,13 @@ const COURSE_SEED = [
   }
 ];
 
+/**
+ * Small career-path hints.
+ *
+ * These are not official degree tracks. They are MVP recommendation hints that
+ * help the model answer questions like "what should I take for AI?" or "what is
+ * useful for full stack?" in a structured way.
+ */
 const CAREER_GUIDES = [
   {
     goal: 'full-stack engineering',
@@ -205,14 +240,39 @@ const CAREER_GUIDES = [
   }
 ];
 
+/**
+ * Convert arbitrary text into a search-friendly format.
+ *
+ * Example:
+ *   "What about CS 344?" -> "what about cs 344"
+ *
+ * We keep colons because Rutgers course codes use colons, for example 01:198:344.
+ */
 function normalize(text) {
   return String(text || '').toLowerCase().replace(/[^a-z0-9:]+/g, ' ').trim();
 }
 
+/**
+ * Split normalized text into useful search tokens.
+ *
+ * Single-character tokens are dropped because they create noisy matches.
+ */
 function tokenize(text) {
   return normalize(text).split(/\s+/).filter((token) => token.length > 1);
 }
 
+/**
+ * Score one course against a user's query.
+ *
+ * This is intentionally simple keyword retrieval, not embeddings/RAG yet.
+ * The scoring is enough for the MVP because the seed data is small.
+ *
+ * Scoring rules:
+ * - +1 if a query token appears anywhere in the searchable course text
+ * - +3 if a token appears in the course code
+ * - +8 if the full query includes the exact course code
+ * - +6 if the full query includes the exact course name
+ */
 function scoreCourse(course, queryTokens, normalizedQuery) {
   const haystack = normalize([
     course.code,
@@ -224,6 +284,7 @@ function scoreCourse(course, queryTokens, normalizedQuery) {
   ].join(' '));
 
   let score = 0;
+
   for (const token of queryTokens) {
     if (haystack.includes(token)) score += 1;
     if (course.code.toLowerCase().includes(token)) score += 3;
@@ -231,9 +292,17 @@ function scoreCourse(course, queryTokens, normalizedQuery) {
 
   if (normalizedQuery.includes(course.code.toLowerCase())) score += 8;
   if (normalizedQuery.includes(normalize(course.name))) score += 6;
+
   return score;
 }
 
+/**
+ * Return the most relevant courses for a user query.
+ *
+ * This gives the interaction handler a compact set of seed courses to inject
+ * into the LLM prompt. The model then converts this context into a natural
+ * advising-style answer.
+ */
 function searchCourses(query, limit = 8) {
   const normalizedQuery = normalize(query);
   const tokens = tokenize(query);
@@ -248,20 +317,37 @@ function searchCourses(query, limit = 8) {
     .map((item) => item.course);
 
   logger.debug('Course search completed', { query, found: ranked.length });
+
   return ranked;
 }
 
+/**
+ * Find career guides that overlap with the user's query.
+ *
+ * Example:
+ * - User asks "what should I take for full-stack?"
+ * - normalizedQuery contains "full stack"
+ * - the full-stack guide gets included in the context block.
+ */
 function findCareerGuides(query) {
   const normalizedQuery = normalize(query);
+
   return CAREER_GUIDES.filter((guide) => {
     const guideText = normalize(`${guide.goal} ${guide.recommended.join(' ')} ${guide.reasoning}`);
     return guideText.split(' ').some((token) => normalizedQuery.includes(token));
   });
 }
 
+/**
+ * Convert one course object into a Markdown-ish block for the LLM context.
+ *
+ * This is not directly sent to the user. It is sent to the model as retrieved
+ * context. The model then decides how to summarize it in Discord.
+ */
 function formatCourse(course) {
   const prereqs = course.prereqs?.length ? `Prereqs: ${course.prereqs.join(', ')}` : null;
   const tags = course.tags?.length ? `Tags: ${course.tags.join(', ')}` : null;
+
   return [
     `**${course.code} ${course.name}**`,
     `Type: ${course.type}`,
@@ -271,6 +357,20 @@ function formatCourse(course) {
   ].filter(Boolean).join('\n  ');
 }
 
+/**
+ * Build the complete context block injected into the OpenAI call.
+ *
+ * This is the main exported function used by interactionHandler.js.
+ *
+ * The context always includes:
+ * - seed CS requirements
+ * - residency / grade caveats
+ * - data freshness note
+ *
+ * It conditionally includes:
+ * - relevant courses matching the query
+ * - career guide hints matching the query
+ */
 function buildCourseContext(query) {
   const matches = searchCourses(query);
   const careerGuides = findCareerGuides(query);
@@ -287,6 +387,7 @@ function buildCourseContext(query) {
     const lines = careerGuides.map((guide) => {
       return `**${guide.goal}**\nRecommended seed path: ${guide.recommended.join(', ')}\nReasoning: ${guide.reasoning}`;
     });
+
     sections.push(`## Career-Oriented Seed Guidance\n${lines.join('\n\n')}`);
   }
 
