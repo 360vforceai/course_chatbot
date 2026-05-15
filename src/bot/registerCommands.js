@@ -5,27 +5,71 @@ const logger = require('../utils/logger');
 const commands = [
   {
     name: 'ask',
-    description: '',
+    description: 'Ask the Rutgers CS advisor any course-related question',
     options: [
       {
         name: 'question',
         type: 3,
-        description: '',
-        required: true
-      },
-      {
-        name: 'question',
-        type: 3,
-        description: '',
-        required: true
-      },
-      {
-        name: 'question',
-        type: 3,
-        description: '',
+        description: 'Your question about courses, prereqs, professors, etc.',
         required: true
       }
     ]
+  },
+  {
+    name:'roadmap',  
+    description:'Generate a personalized semester-by-semester course plan',
+    options:[
+      {
+        name: 'completed',
+        type: 3,
+        description: 'Courses you have already completed (e.g. CS 111, CS 112)',
+        required: true
+      },
+      {
+        name:'goal',
+        type:3,
+        description:'Your career goal or track (e.g. AI, systems, software engineering)',
+        required:true
+      },
+      {
+        name: 'semesters',
+        type: 3,
+        description: 'How many semesters remaining (e.g. 4)',
+        required:false
+
+      }
+    ]
+  },
+  {
+    name: 'search',
+    description: 'Look up a specific course',
+    options: [
+
+      {
+        name: 'course',
+        type: 3,
+        description: 'Course name or code(e.g. CS 344 or "algorithms")',
+        required: true
+      }
+    ]
+  },
+  {
+    name: 'snipe',
+    description: 'Check seat availability for a course on Webreg',
+    options: [
+      {
+        name: 'course',
+        type: 3,
+        description: 'Course code to check (e.g. CS 416)',
+        required:true
+      }
+    ]
+  },
+  {
+    name: 'help',
+    description: 'Show all available commands',
+    options: []
+
   }
 ];
 
