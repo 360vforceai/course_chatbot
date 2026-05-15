@@ -223,9 +223,11 @@ async function getRouterDecision(shortTermHistory, question) {
 async function getResponse(
   messages,
   {
-    courseContext = null,
-    requirementsContext = null,
-    professorContext = null,
+    ragContext = null,
+    courseCatalogContext = null,
+    degreeRequirementsContext = null,
+    webregContext = null,
+    roadmapContext = null,
     keywords = null
   } = {}
 ) {
@@ -242,7 +244,7 @@ async function getResponse(
   const contextParts = [];
   const keywordsLine = keywords ? `Search keywords used: "${keywords}"\n\n` : '';
 
-  if (courseContext) {
+  if (courseCatalogContext) {
     contextParts.push(`## Course Catalog — Rutgers CS
 ${keywordsLine}The following is real course data from the Rutgers CS catalog. Use it to answer questions about specific courses, prereqs, credits, and descriptions. Reference course codes and titles directly.
 
@@ -252,7 +254,7 @@ ${courseContext}
 → If building a roadmap: use prereq chains to sequence courses correctly.`);
   }
 
-  if (requirementsContext) {
+  if (degreeRequirementsContext) {
     contextParts.push(`## Degree Requirements — Rutgers CS
 ${keywordsLine}The following is official Rutgers CS degree requirement data. Use it to answer questions about what's required to graduate, track options, and core vs elective rules.
 
@@ -262,7 +264,7 @@ ${requirementsContext}
 → When generating a plan, verify each semester satisfies graduation requirements progressively.`);
   }
 
-  if (professorContext) {
+  if (ragContext) {
     contextParts.push(`## Professor Reviews — RateMyProfessor Data
 ${keywordsLine}The following is professor rating data for Rutgers CS courses. Use it to give students insight on difficulty, teaching quality, and what to expect.
 
