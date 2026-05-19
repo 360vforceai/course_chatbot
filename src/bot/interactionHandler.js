@@ -18,38 +18,47 @@ const {
 } = require('../agents/courseClient');
 const logger = require('../utils/logger');
 
-// Prevent Discord Gateway from replaying the same interaction, thereby avoiding duplicate processing.
+// Prevent Discord Gateway from replaying the same interaction, avoiding duplicate processing.
 const handledInteractions = new Map();
 
-// Periodically purge old IDs that are more than 10 minutes old (interaction tokens have a 15-minute validity period).
+// Periodically purge IDs older than 10 minutes (interaction tokens expire after 15 min).
 setInterval(() => {
   const cutoff = Date.now() - 10 * 60 * 1000;
-
-  for (const [interactionId, timestamp] of handledInteractions.entries()) {
-    if (timestamp < cutoff) {
-      handledInteractions.delete(interactionId);
-    }
+  for (const [id, timestamp] of handledInteractions.entries()) {
+    if (timestamp < cutoff) handledInteractions.delete(id);
   }
 }, 10 * 60 * 1000);
 
-async function handleAsk(interaction, userId, username) {
-  const question = interaction.options.getString('question');
+//Shared helper: send chunks back to Discord
 
-  if (!question) {
-    await interaction.reply({
-      content: 'Please provide a course question.',
-      ephemeral: true
-    }).catch((err) => logger.error('Reply failed:', err.message));
+async function sendChunks(interaction, content) {
+  const chunks = splitMessage(content);
+  if (chunks.length === 0) {
+    await interaction
+      .editReply('I could not generate a response. Please try again.')
+      .catch((err) => logger.error('Edit reply failed:', err.message));
     return;
   }
+  await interaction
+    .editReply(chunks[0])
+    .catch((err) => logger.error('Edit reply failed:', err.message));
+  for (let i = 1; i < chunks.length; i++) {
+    await interaction
+      .followUp({ content: chunks[i] })
+      .catch((err) => logger.error('Follow-up failed:', err.message));
+  }
+}
 
-  // Step 1: Serial — First retrieve historical data, then allow the Routing Agent to make a decision.
+//Shared helper: run RAG + getResponse for a question string 
+
+async function runAdvisor(userId, username, question) {
+  // Step 1: get history, then let router decide which tables + keywords to use
   const shortTermHistory = await getShortTermHistory(userId);
   const { tables, keywords } = await getRouterDecision(shortTermHistory, question);
 
   logger.info('Router decision applied', { userId, tables, keywords });
 
-  // Step 2: Concurrent — Based on the routing results, select which tables to search, using keywords as the unified input for retrieval across all sources.
+  // Step 2: concurrent searches across all relevant tables
   const [
     { memories, embedding },
     courseCatalogResults,
@@ -78,11 +87,11 @@ async function handleAsk(interaction, userId, username) {
       : Promise.resolve([])
   ]);
 
-  // Step 3: Format the context.
+  // Step 3: format results into context strings
   const ragContext = memories.length > 0
-    ? memories.map((memory) => {
-        const name = memory.metadata?.username || `user ID ${memory.user_id}`;
-        return `Discord user "@${name}" previously said: "${memory.content}"`;
+    ? memories.map((m) => {
+        const name = m.metadata?.username || `user ID ${m.user_id}`;
+        return `Discord user "@${name}" previously said: "${m.content}"`;
       }).join('\n')
     : null;
 
@@ -92,12 +101,12 @@ async function handleAsk(interaction, userId, username) {
   const roadmapContext = formatRoadmapContext(roadmapResults);
 
   if (ragContext) logger.info('RAG injected community memory', { userId, count: memories.length });
-  if (courseCatalogContext) logger.info('RAG injected course catalog results', { userId, count: courseCatalogResults.length });
-  if (degreeRequirementsContext) logger.info('RAG injected degree requirement results', { userId, count: degreeRequirementResults.length });
-  if (webregContext) logger.info('RAG injected WebReg results', { userId, count: webregResults.length });
-  if (roadmapContext) logger.info('RAG injected roadmap results', { userId, count: roadmapResults.length });
+  if (courseCatalogContext) logger.info('RAG injected course catalog', { userId, count: courseCatalogResults.length });
+  if (degreeRequirementsContext) logger.info('RAG injected degree requirements', { userId, count: degreeRequirementResults.length });
+  if (webregContext) logger.info('RAG injected webreg', { userId, count: webregResults.length });
+  if (roadmapContext) logger.info('RAG injected roadmaps', { userId, count: roadmapResults.length });
 
-  // Step 4: Construct the message sequence, passing in the keywords to allow `getResponse` to inject the relevant context paragraphs.
+  // Step 4: build message list and call the advisor
   const messages = [...shortTermHistory, { role: 'user', content: question }];
 
   const { content } = await getResponse(messages, {
@@ -109,65 +118,146 @@ async function handleAsk(interaction, userId, username) {
     keywords
   });
 
+  // Save to short-term history in the background — don't block the reply
   saveMemoryAsync(userId, username, question, content, embedding);
 
-  const chunks = splitMessage(content);
+  return content;
+}
 
-  if (chunks.length === 0) {
-    await interaction
-      .editReply('I could not generate a response. Please try again.')
-      .catch((err) => logger.error('Edit reply failed:', err.message));
+// /ask 
+// General course question: routes through the full RAG pipeline.
+
+async function handleAsk(interaction, userId, username) {
+  const question = interaction.options.getString('question');
+  if (!question) {
+    await interaction.reply({ content: 'Please provide a course question.', ephemeral: true })
+      .catch((err) => logger.error('Reply failed:', err.message));
     return;
   }
 
-  await interaction
-    .editReply(chunks[0])
-    .catch((err) => logger.error('Edit reply failed:', err.message));
-
-  for (let i = 1; i < chunks.length; i += 1) {
-    await interaction
-      .followUp({ content: chunks[i] })
-      .catch((err) => logger.error('Follow-up failed:', err.message));
-  }
-
+  const content = await runAdvisor(userId, username, question);
+  await sendChunks(interaction, content);
   logger.info('Handled /ask', { userId, username, questionLength: question.length });
 }
+
+//  /roadmap 
+// Generates a personalized semester-by-semester plan.
+// Options: completed (required), goal (required), semesters (optional)
+
+async function handleRoadmap(interaction, userId, username) {
+  const completed = interaction.options.getString('completed');
+  const goal = interaction.options.getString('goal');
+  const semesters = interaction.options.getString('semesters') || 'not specified';
+
+  const question =
+    `Generate a semester-by-semester course roadmap for a Rutgers CS student. ` +
+    `Completed courses: ${completed}. ` +
+    `Career goal / track: ${goal}. ` +
+    `Semesters remaining: ${semesters}. ` +
+    `Account for prereq chains, difficulty balance, and degree requirements.`;
+
+  const content = await runAdvisor(userId, username, question);
+  await sendChunks(interaction, content);
+  logger.info('Handled /roadmap', { userId, username, goal });
+}
+
+//  /search 
+// Looks up a specific course by name or code.
+
+async function handleSearch(interaction, userId, username) {
+  const course = interaction.options.getString('course');
+  if (!course) {
+    await interaction.reply({ content: 'Please provide a course name or code.', ephemeral: true })
+      .catch((err) => logger.error('Reply failed:', err.message));
+    return;
+  }
+
+  const question =
+    `Look up the course "${course}". ` +
+    `Provide the course code, full title, credits, prerequisites, and a description. ` +
+    `Also note which degree requirement (core, track, elective) it fulfills if known.`;
+
+  const content = await runAdvisor(userId, username, question);
+  await sendChunks(interaction, content);
+  logger.info('Handled /search', { userId, username, course });
+}
+
+//  /snipe 
+// Checks WebReg seat availability for a course.
+
+async function handleSnipe(interaction, userId, username) {
+  const course = interaction.options.getString('course');
+  if (!course) {
+    await interaction.reply({ content: 'Please provide a course code to check.', ephemeral: true })
+      .catch((err) => logger.error('Reply failed:', err.message));
+    return;
+  }
+
+  const question =
+    `Check WebReg for current seat availability for "${course}". ` +
+    `List all open sections with their index numbers, meeting times, professor, and number of open seats. ` +
+    `If no seats are available, explain how course sniping works so the student can register when a seat opens.`;
+
+  const content = await runAdvisor(userId, username, question);
+  await sendChunks(interaction, content);
+  logger.info('Handled /snipe', { userId, username, course });
+}
+
+//  /help 
+// Shows all available commands — no RAG needed, just a static reply.
+
+async function handleHelp(interaction) {
+  const helpText = [
+    '**Rutgers CS Course Advisor — Commands**',
+    '',
+    '`/ask <question>` — Ask anything about courses, prereqs, professors, or degree requirements.',
+    '`/roadmap <completed> <goal> [semesters]` — Get a personalized semester-by-semester course plan.',
+    '`/search <course>` — Look up a specific course by name or code (e.g. CS 344, "algorithms").',
+    '`/snipe <course>` — Check WebReg seat availability and learn how to snipe open seats.',
+    '`/help` — Show this message.',
+    '',
+    'All advice is based on official Rutgers CS data. Always verify on WebReg before registering.'
+  ].join('\n');
+
+  await interaction.editReply(helpText)
+    .catch((err) => logger.error('Help reply failed:', err.message));
+
+  logger.info('Handled /help');
+}
+
+//  Main dispatcher 
 
 async function handleInteraction(interaction) {
   if (!interaction.isChatInputCommand()) return;
 
-  if (interaction.commandName !== 'ask') return;
+  const { commandName } = interaction;
+  const validCommands = ['ask', 'roadmap', 'search', 'snipe', 'help'];
+  if (!validCommands.includes(commandName)) return;
 
   const userId = interaction.user.id;
   const username = interaction.user.username;
 
-  logger.info('Interaction received', {
-    userId,
-    command: interaction.commandName,
-    id: interaction.id
-  });
+  logger.info('Interaction received', { userId, command: commandName, id: interaction.id });
 
-  // Deduplication: Ensure that the same interaction is not processed more than once (as the Gateway may replay events upon reconnection).
+  // Deduplication: skip if we've already handled this interaction ID
   if (handledInteractions.has(interaction.id)) {
     logger.warn('Duplicate interaction skipped', { id: interaction.id });
     return;
   }
-
   handledInteractions.set(interaction.id, Date.now());
 
+  // Rate limiting
   if (isRateLimited(userId)) {
     const remaining = getRemainingSeconds(userId);
-
     await interaction.reply({
-      content: `Please wait ${remaining} second(s) before asking again.`,
+      content: `Please wait ${remaining} second(s) before using another command.`,
       ephemeral: true
     }).catch((err) => logger.error('Reply failed:', err.message));
-
     return;
   }
-
   recordRequest(userId);
 
+  // Defer the reply so Discord doesn't time out while we fetch data
   try {
     await interaction.deferReply();
   } catch (err) {
@@ -176,18 +266,17 @@ async function handleInteraction(interaction) {
   }
 
   try {
-    await handleAsk(interaction, userId, username);
+    if (commandName === 'ask')     await handleAsk(interaction, userId, username);
+    if (commandName === 'roadmap') await handleRoadmap(interaction, userId, username);
+    if (commandName === 'search')  await handleSearch(interaction, userId, username);
+    if (commandName === 'snipe')   await handleSnipe(interaction, userId, username);
+    if (commandName === 'help')    await handleHelp(interaction);
   } catch (err) {
     logger.error('Interaction handler error:', err.message);
-
     await interaction
       .editReply('Sorry, something went wrong. Please try again later.')
-      .catch((editErr) => {
-        logger.error('Fallback edit failed:', editErr.message);
-      });
+      .catch((editErr) => logger.error('Fallback edit failed:', editErr.message));
   }
 }
 
-module.exports = {
-  handleInteraction
-};
+module.exports = { handleInteraction };

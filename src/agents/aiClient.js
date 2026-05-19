@@ -32,7 +32,7 @@ Help students navigate WebReg and course registration.
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT;
 const MODEL = 'gpt-4o-mini';
 
-//tools can be extended here (rate my prof etc rutgers roadmap)
+// Tools can be extended here (e.g. live WebReg scraper, RateMyProfessor API)
 const TOOLS = [];
 
 let client = null;
@@ -56,9 +56,8 @@ function executeToolCall(name, args) {
   return `Unknown tool: ${name}`;
 }
 
-//sanitizes conversation history to ensure tool_calls and tool responses are properly paired
-//drops orphaned tool messages that have no corresponding assistant tool_call
- 
+// Sanitizes conversation history to ensure tool_calls and tool responses are properly paired.
+// Drops orphaned tool messages that have no corresponding assistant tool_call.
 function sanitizeHistoryMessages(messages) {
   const safeMessages = [];
   let pendingToolCallIds = null;
@@ -107,18 +106,19 @@ function sanitizeHistoryMessages(messages) {
 }
 
 
-// router agent: decides which knowledge sources to query and generates search keywords
-// tables: "course_catalog", "degree_requirements", "professor_reviews"
+// Router Agent
+// Decides which Supabase tables to query and generates search keywords.
 
 const ROUTER_SYSTEM_PROMPT = `You are a query router for a Rutgers CS course advising Discord bot.
 
 Given a conversation history and the user's latest question, output a JSON object with exactly two fields:
 
 1. "tables": array of data sources to query (can be empty for pure chit-chat).
-   Valid values: "course_catalog", "degree_requirements", "professor_reviews"
-   - course_catalog: specific course info — code, title, description, prereqs, credits, availability
+   Valid values: "course_catalog", "degree_requirements", "webreg", "roadmaps"
+   - course_catalog: specific course info — code, title, description, prereqs, credits
    - degree_requirements: CS degree requirements, tracks (AI/systems/theory), core vs elective rules
-   - professor_reviews: RateMyProfessor data — professor ratings, difficulty, grade distribution
+   - webreg: real-time course availability, open seats, section times, index numbers
+   - roadmaps: official Rutgers CS degree roadmap — suggested semester-by-semester sequences
 
 2. "keywords": a single short phrase (3-8 words) optimized for semantic vector search.
    Match the actual text format stored in each table:
@@ -131,22 +131,29 @@ Given a conversation history and the user's latest question, output a JSON objec
    "CS Major Core Requirement: CS 111, CS 112, CS 205, CS 206, CS 211 | Track: Systems | Electives: ..."
    → Good keywords: requirement type + track ("CS core requirements", "systems track electives", "graduation checklist")
 
-   ## professor_reviews embedding format:
-   "Professor Name | CS 416 | Rating: 4.2/5 | Difficulty: 3.8 | Grade: B+ average | Tags: clear lectures, tough exams"
-   → Good keywords: professor name or course code + professor ("CS 416 professor rating", "Menendez operating systems")
+   ## webreg embedding format:
+   "CS 416:01 | Operating Systems Design | Prof. Tjang | Mon/Wed 10:20-11:40 | Index: 12345 | Open seats: 4 | Credits: 3"
+   → Good keywords: course code + section, or professor name ("CS 416 open seats", "operating systems section times")
+
+   ## roadmaps embedding format:
+   "CS Track: Artificial Intelligence | Semester 1: CS 111, MATH 151 | Semester 2: CS 112, MATH 152 | ..."
+   → Good keywords: track name + semester sequence ("AI track semester plan", "CS roadmap systems 4 years")
 
    ## General keyword rules:
    - Convert course names to codes when known (e.g. "algorithms class" → "CS 344 algorithms")
    - If student mentions completed courses, focus on what comes NEXT in the prereq chain
    - Strip filler words; focus on course codes, topic names, requirement labels
-   - For roadmap requests, route to both course_catalog and degree_requirements
+   - For roadmap requests, route to both "roadmaps" and "degree_requirements"
+   - For seat availability questions, route to "webreg"
 
    ## Keyword examples:
    "what should I take after CS 112?" → tables: ["course_catalog"], keywords: "CS 205 CS 206 after data structures"
-   "how do I graduate in 4 years?" → tables: ["degree_requirements"], keywords: "CS degree 4 year graduation plan"
-   "is CS 344 hard?" → tables: ["course_catalog", "professor_reviews"], keywords: "CS 344 algorithms difficulty"
-   "who teaches OS?" → tables: ["professor_reviews", "course_catalog"], keywords: "CS 416 operating systems professor"
-   "I want to go into AI, what electives should I take?" → tables: ["degree_requirements", "course_catalog"], keywords: "AI track electives machine learning"
+   "how do I graduate in 4 years?" → tables: ["degree_requirements", "roadmaps"], keywords: "CS degree 4 year graduation plan"
+   "is CS 344 hard?" → tables: ["course_catalog"], keywords: "CS 344 algorithms difficulty"
+   "who teaches OS?" → tables: ["course_catalog", "webreg"], keywords: "CS 416 operating systems professor"
+   "I want to go into AI, what electives?" → tables: ["degree_requirements", "roadmaps", "course_catalog"], keywords: "AI track electives machine learning"
+   "are there open seats in CS 314?" → tables: ["webreg"], keywords: "CS 314 open seats availability"
+   "show me the AI track roadmap" → tables: ["roadmaps", "degree_requirements"], keywords: "AI track semester roadmap plan"
    "hey what's up" → tables: [], keywords: ""
 
 Output ONLY valid JSON, no explanation, no markdown fences.`;
@@ -159,7 +166,7 @@ Output ONLY valid JSON, no explanation, no markdown fences.`;
  */
 async function getRouterDecision(shortTermHistory, question) {
   const fallback = {
-    tables: ['course_catalog', 'degree_requirements', 'professor_reviews'],
+    tables: ['course_catalog', 'degree_requirements', 'roadmaps'],
     keywords: question
   };
 
@@ -190,7 +197,7 @@ async function getRouterDecision(shortTermHistory, question) {
     const raw = response.choices[0]?.message?.content?.trim() || '';
     const parsed = JSON.parse(raw);
 
-    const validTables = ['course_catalog', 'degree_requirements', 'professor_reviews'];
+    const validTables = ['course_catalog', 'degree_requirements', 'webreg', 'roadmaps'];
     const tables = Array.isArray(parsed.tables)
       ? parsed.tables.filter((t) => validTables.includes(t))
       : fallback.tables;
@@ -208,16 +215,19 @@ async function getRouterDecision(shortTermHistory, question) {
   }
 }
 
-//main response function
+
+// Main response function
 
 /**
  * Generates a response from the course advisor.
- * @param {Array} messages - full sanitized conversation history including latest user message
+ * @param {Array} messages - full conversation history including latest user message
  * @param {Object} options
- * @param {string|null} options.courseContext     - RAG results from course_catalog
- * @param {string|null} options.requirementsContext - RAG results from degree_requirements
- * @param {string|null} options.professorContext  - RAG results from professor_reviews
- * @param {string|null} options.keywords          - search keywords used (for transparency)
+ * @param {string|null} options.ragContext                - community memory results
+ * @param {string|null} options.courseCatalogContext      - RAG results from course_catalog
+ * @param {string|null} options.degreeRequirementsContext - RAG results from degree_requirements
+ * @param {string|null} options.webregContext             - RAG results from webreg
+ * @param {string|null} options.roadmapContext            - RAG results from roadmaps
+ * @param {string|null} options.keywords                  - search keywords used
  * @returns {Promise<{ content: string, messages: Array }>}
  */
 async function getResponse(
@@ -233,9 +243,11 @@ async function getResponse(
 ) {
   logger.info('getResponse called', {
     msgCount: messages.length,
-    hasCourses: !!courseContext,
-    hasRequirements: !!requirementsContext,
-    hasProfessors: !!professorContext
+    hasCourses: !!courseCatalogContext,
+    hasRequirements: !!degreeRequirementsContext,
+    hasWebreg: !!webregContext,
+    hasRoadmap: !!roadmapContext,
+    hasRag: !!ragContext
   });
 
   const systemMessage = { role: 'system', content: SYSTEM_PROMPT };
@@ -248,7 +260,7 @@ async function getResponse(
     contextParts.push(`## Course Catalog — Rutgers CS
 ${keywordsLine}The following is real course data from the Rutgers CS catalog. Use it to answer questions about specific courses, prereqs, credits, and descriptions. Reference course codes and titles directly.
 
-${courseContext}
+${courseCatalogContext}
 
 → If the student is searching for a course: give the code, title, prereqs, and a brief description.
 → If building a roadmap: use prereq chains to sequence courses correctly.`);
@@ -258,20 +270,37 @@ ${courseContext}
     contextParts.push(`## Degree Requirements — Rutgers CS
 ${keywordsLine}The following is official Rutgers CS degree requirement data. Use it to answer questions about what's required to graduate, track options, and core vs elective rules.
 
-${requirementsContext}
+${degreeRequirementsContext}
 
 → Always specify whether a course is core, track-required, or elective.
 → When generating a plan, verify each semester satisfies graduation requirements progressively.`);
   }
 
+  if (webregContext) {
+    contextParts.push(`## WebReg — Live Course Availability
+${keywordsLine}The following is current course section data from WebReg. Use it to answer questions about open seats, section times, index numbers, and professors teaching this semester.
+
+${webregContext}
+
+→ Give the index number, open seat count, and meeting times when answering availability questions.
+→ If seats show as 0, tell the student to check back or consider sniping the course.`);
+  }
+
+  if (roadmapContext) {
+    contextParts.push(`## Course Roadmaps — Rutgers CS
+${keywordsLine}The following is official Rutgers CS roadmap data showing suggested semester-by-semester sequences. Use it when generating or reviewing multi-semester plans.
+
+${roadmapContext}
+
+→ Use the roadmap as the baseline sequence, then adjust for the student's completed courses and goals.
+→ Always respect prereq chains shown in the roadmap.`);
+  }
+
   if (ragContext) {
-    contextParts.push(`## Professor Reviews — RateMyProfessor Data
-${keywordsLine}The following is professor rating data for Rutgers CS courses. Use it to give students insight on difficulty, teaching quality, and what to expect.
+    contextParts.push(`## Community Memory
+${keywordsLine}The following are relevant things other students have previously shared in this Discord server.
 
-${professorContext}
-
-→ Give specific ratings and common student feedback tags when recommending professors.
-→ Never fabricate ratings or professor names not present in this data.`);
+${ragContext}`);
   }
 
   // Message order:
@@ -323,7 +352,6 @@ ${professorContext}
         };
       }
 
-      // Handle tool calls (for future WebReg / RMP integrations)
       if (choice.finish_reason === 'tool_calls' && msg.tool_calls?.length) {
         apiMessages.push(msg);
         for (const tc of msg.tool_calls) {
