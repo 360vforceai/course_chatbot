@@ -16,7 +16,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/bot/index.js",
-    "register": "node src/bot/register-commands.js"
+    "register": "node src/bot/registerCommands.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.1",
