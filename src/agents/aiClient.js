@@ -35,6 +35,21 @@ const MODEL = 'gpt-4o-mini';
 // Tools can be extended here (e.g. live WebReg scraper, RateMyProfessor API)
 const TOOLS = [];
 
+const KNOWN_MAJORS = [
+  'Accounting', 'BAIT', 'Biology', 'Biomedical Engineering',
+  'Civil Engineering', 'Computer Engineering', 'CS', 'Computer Science',
+  'Economics', 'Electrical Engineering', 'Finance', 'Information Technology',
+  'Leadership and Management', 'Marketing', 'Math', 'Mechanical Engineering',
+  'Nursing', 'Political Science', 'Psychology', 'Supply Chain Management'
+];
+
+function appendTreeSuggestion(content) {
+  const lower = content.toLowerCase();
+  const matched = KNOWN_MAJORS.find((m) => lower.includes(m.toLowerCase()));
+  if (!matched) return content;
+  return content + `\n\n💡 Want to see the full degree tree? Use \`/tree\` and select **${matched}**.`;
+}
+
 let client = null;
 
 function getClient() {
@@ -383,7 +398,7 @@ ${ragContext}`);
       const content = msg.content?.trim() || '';
       if (content) {
         apiMessages.push(msg);
-        return { content, messages: apiMessages };
+        return { content: appendTreeSuggestion(content), messages: apiMessages };
       }
 
       logger.warn('OpenAI returned empty content', response);
@@ -420,5 +435,6 @@ ${ragContext}`);
 module.exports = {
   getResponse,
   getRouterDecision,
-  getClient
+  getClient,
+  appendTreeSuggestion
 };

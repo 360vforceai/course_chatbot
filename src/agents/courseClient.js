@@ -140,6 +140,26 @@ function formatRoadmapContext(results) {
   return results.map((r) => r.content).join('\n\n');
 }
 
+// -- Trees 
+// Table: major_images
+
+async function getMajorImage(major) {
+  try {
+    const { data, error } = await getSupabase()
+      .from('major_images')
+      .select('image_url, label')
+      .ilike('major', `%${major}%`)
+      .limit(1)
+      .single();
+
+    if (error || !data) return null;
+    return data;
+  } catch (err) {
+    logger.error('getMajorImage failed:', err.message);
+    return null;
+  }
+}
+
 module.exports = {
   searchCourseCatalog,
   formatCourseCatalogContext,
@@ -148,5 +168,6 @@ module.exports = {
   searchWebReg,
   formatWebRegContext,
   searchRoadmaps,
-  formatRoadmapContext
+  formatRoadmapContext,
+  getMajorImage
 };

@@ -14,7 +14,8 @@ const {
   searchWebReg,
   formatWebRegContext,
   searchRoadmaps,
-  formatRoadmapContext
+  formatRoadmapContext,
+  getMajorImage 
 } = require('../agents/courseClient');
 const logger = require('../utils/logger');
 
@@ -203,6 +204,26 @@ async function handleSnipe(interaction, userId, username) {
   logger.info('Handled /snipe', { userId, username, course });
 }
 
+// /tree
+// generates the tree for the user with the desired major
+async function handleTree(interaction) {
+  const major = interaction.options.getString('major');
+
+  const imageResult = await getMajorImage(major);
+
+  if (!imageResult) {
+    await interaction.editReply(`No degree tree found for ${major}.`);
+    return;
+  }
+
+  await interaction.editReply({
+    embeds: [{
+      title: imageResult.label,
+      image: { url: imageResult.image_url }
+    }]
+  });
+}
+
 //  /help 
 // Shows all available commands — no RAG needed, just a static reply.
 
@@ -231,7 +252,7 @@ async function handleInteraction(interaction) {
   if (!interaction.isChatInputCommand()) return;
 
   const { commandName } = interaction;
-  const validCommands = ['ask', 'roadmap', 'search', 'snipe', 'help'];
+  const validCommands = ['ask', 'roadmap', 'search', 'snipe', 'tree', 'help'];
   if (!validCommands.includes(commandName)) return;
 
   const userId = interaction.user.id;
@@ -271,6 +292,7 @@ async function handleInteraction(interaction) {
     if (commandName === 'search')  await handleSearch(interaction, userId, username);
     if (commandName === 'snipe')   await handleSnipe(interaction, userId, username);
     if (commandName === 'help')    await handleHelp(interaction);
+    if (interaction.commandName === 'tree') await handleTree(interaction);
   } catch (err) {
     logger.error('Interaction handler error:', err.message);
     await interaction
