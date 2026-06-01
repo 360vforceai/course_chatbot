@@ -99,6 +99,18 @@ const commands = [
     ]
   },
   {
+    name: 'careers',
+    description: 'Find majors that match a career goal',
+    options: [
+    {
+      name: 'goal',
+      type: 3,
+      description: 'Career you want (e.g. software engineer, lawyer, actuary)',
+      required: true
+    }
+    ]
+  },
+  {
     name: 'help',
     description: 'Show all available commands',
     options: []

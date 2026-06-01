@@ -15,7 +15,8 @@ const {
   formatWebRegContext,
   searchRoadmaps,
   formatRoadmapContext,
-  getMajorImage 
+  getMajorImage,
+  findOccupation
 } = require('../agents/courseClient');
 const logger = require('../utils/logger');
 
@@ -224,20 +225,66 @@ async function handleTree(interaction) {
   });
 }
 
+// /career
+async function handleCareer(interaction, userId, username) {
+  const goal = interaction.options.getString('goal');
+
+  const occupation = await findOccupation(goal);
+
+  if (!occupation) {
+    await interaction.editReply(
+      `I couldn't find a career matching "${goal}" in the Rutgers career database.`
+    );
+    return;
+  }
+
+  const question = `Career Goal: ${occupation.occupation}
+
+  Recommended Rutgers majors:
+  ${occupation.recommended_majors}
+
+  Only rank the majors listed above.
+
+  For each major explain:
+  - Why it fits
+  - Common occupations
+  - Salary outlook
+  - Recommended minors or double majors
+  `;
+
+  const content = await runAdvisor(
+    userId,
+    username,
+    question)
+  ;
+
+  await sendChunks(interaction, content);
+
+  logger.info('Handled /career', {
+    userId,
+    username,
+    goal,
+    majors: occupation.recommended_majors
+  });
+
+
+}
+
 //  /help 
 // Shows all available commands — no RAG needed, just a static reply.
 
 async function handleHelp(interaction) {
   const helpText = [
-    '**Rutgers CS Course Advisor — Commands**',
+    '**Rutgers Academic Course Advisor — Commands**',
     '',
     '`/ask <question>` — Ask anything about courses, prereqs, professors, or degree requirements.',
     '`/roadmap <completed> <goal> [semesters]` — Get a personalized semester-by-semester course plan.',
     '`/search <course>` — Look up a specific course by name or code (e.g. CS 344, "algorithms").',
     '`/snipe <course>` — Check WebReg seat availability and learn how to snipe open seats.',
+    '`/career <goal>` — Find the Rutgers majors that best match a career goal.',
     '`/help` — Show this message.',
     '',
-    'All advice is based on official Rutgers CS data. Always verify on WebReg before registering.'
+    'All advice is based on official Rutgers Course data. Always verify on WebReg before registering.'
   ].join('\n');
 
   await interaction.editReply(helpText)
@@ -252,7 +299,7 @@ async function handleInteraction(interaction) {
   if (!interaction.isChatInputCommand()) return;
 
   const { commandName } = interaction;
-  const validCommands = ['ask', 'roadmap', 'search', 'snipe', 'tree', 'help'];
+  const validCommands = ['ask', 'roadmap', 'search', 'snipe', 'tree','career','help'];
   if (!validCommands.includes(commandName)) return;
 
   const userId = interaction.user.id;
@@ -291,6 +338,7 @@ async function handleInteraction(interaction) {
     if (commandName === 'roadmap') await handleRoadmap(interaction, userId, username);
     if (commandName === 'search')  await handleSearch(interaction, userId, username);
     if (commandName === 'snipe')   await handleSnipe(interaction, userId, username);
+    if (commandName === 'career')  await handleCareer(interaction, userId, username);
     if (commandName === 'help')    await handleHelp(interaction);
     if (interaction.commandName === 'tree') await handleTree(interaction);
   } catch (err) {

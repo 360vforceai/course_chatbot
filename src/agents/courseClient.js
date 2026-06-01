@@ -160,6 +160,48 @@ async function getMajorImage(major) {
   }
 }
 
+async function findOccupation(goal) {
+  try {
+
+    const normalizedGoal = goal?.trim();
+    
+    if (!normalizedGoal) return null;
+
+    logger.info('Searching occupations', {
+    goal: normalizedGoal
+    });
+
+    // Exact match first
+    let { data } = await getSupabase()
+      .from('occupations')
+      .select('*')
+      .ilike('occupation', normalizedGoal)
+      .limit(1);
+
+    if (data?.length) return data[0];
+
+    // Partial match second
+    ({ data } = await getSupabase()
+      .from('occupations')
+      .select('*')
+      .ilike('occupation',`%${normalizedGoal}%`)
+      .limit(1));
+
+    if (data?.length) return data[0];
+
+    return null;
+  }
+
+  catch (err) {
+    
+  logger.error('findOccupation failed:', err.message);
+  return null;
+
+  }
+}
+
+
+
 module.exports = {
   searchCourseCatalog,
   formatCourseCatalogContext,
@@ -169,5 +211,6 @@ module.exports = {
   formatWebRegContext,
   searchRoadmaps,
   formatRoadmapContext,
-  getMajorImage
+  getMajorImage,
+  findOccupation
 };
