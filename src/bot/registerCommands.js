@@ -99,7 +99,7 @@ const commands = [
     ]
   },
   {
-    name: 'careers',
+    name: 'career',
     description: 'Find majors that match a career goal',
     options: [
     {
