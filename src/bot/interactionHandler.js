@@ -250,6 +250,9 @@ async function handleCareer(interaction, userId, username) {
   - Common occupations
   - Salary outlook
   - Recommended minors or double majors
+
+  IMPORTANT:
+  Only recommend Rutgers-New Brunswick majors, minors, certificates, or concentrations that actually exist. Do not invent programs.
   `;
 
   const content = await runAdvisor(
