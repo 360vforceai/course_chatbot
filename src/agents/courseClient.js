@@ -143,12 +143,12 @@ function formatRoadmapContext(results) {
 // -- Trees 
 // Table: major_images
 
-async function getMajorImage(major) {
+async function getMajorImage(input) {
   try {
     const { data, error } = await getSupabase()
       .from('major_images')
       .select('image_url, label')
-      .ilike('major', `%${major}%`)
+      .eq('label', input.trim())   // match the exact label from autocomplete
       .limit(1)
       .single();
 
@@ -157,6 +157,38 @@ async function getMajorImage(major) {
   } catch (err) {
     logger.error('getMajorImage failed:', err.message);
     return null;
+  }
+}
+
+// ── Tree Autocomplete ─────────────────────────────────────────────────────────
+// Queries major_images for labels matching the user's partial input.
+// Returns up to 25 { name, value } pairs for Discord autocomplete.
+
+async function getMajorAutocomplete(query) {
+  try {
+    const db = getSupabase();
+    let supabaseQuery = db
+      .from('major_images')
+      .select('label')
+      .order('label', { ascending: true })
+      .limit(25);
+
+    // Only filter when the user has typed something
+    if (query && query.trim().length > 0) {
+      supabaseQuery = supabaseQuery.ilike('label', `%${query.trim()}%`);
+    }
+
+    const { data, error } = await supabaseQuery;
+    if (error) throw error;
+
+    // Discord autocomplete expects [{ name, value }]
+    return (data || []).map((row) => ({
+      name: row.label,   // displayed to user
+      value: row.label   // sent back as the option value on submit
+    }));
+  } catch (err) {
+    logger.error('getMajorAutocomplete failed:', err.message);
+    return [];
   }
 }
 
@@ -212,5 +244,6 @@ module.exports = {
   searchRoadmaps,
   formatRoadmapContext,
   getMajorImage,
-  findOccupation
+  findOccupation,
+  getMajorAutocomplete
 };

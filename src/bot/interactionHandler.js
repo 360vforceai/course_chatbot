@@ -1,6 +1,7 @@
 const { isRateLimited, recordRequest, getRemainingSeconds } = require('../utils/rateLimiter');
 const { splitMessage } = require('../utils/messageUtils');
 const { getResponse, getRouterDecision } = require('../agents/aiClient');
+const { getMajorAutocomplete } = require('../agents/courseClient'); 
 const {
   getShortTermHistory,
   searchLongTermMemories,
@@ -209,11 +210,12 @@ async function handleSnipe(interaction, userId, username) {
 // generates the tree for the user with the desired major
 async function handleTree(interaction) {
   const major = interaction.options.getString('major');
-
   const imageResult = await getMajorImage(major);
 
   if (!imageResult) {
-    await interaction.editReply(`No degree tree found for ${major}.`);
+    await interaction.editReply(
+      `No degree tree found for "${major}". Try typing the full major name, e.g. **Computer Science**, **Data Science CS**, **Math Actuarial**, **Biology Delayed Chem**.`
+    );
     return;
   }
 
@@ -223,6 +225,30 @@ async function handleTree(interaction) {
       image: { url: imageResult.image_url }
     }]
   });
+}
+
+// /tree autocomplete
+// Fires as the user types in the major field — returns filtered label suggestions.
+
+async function handleTreeAutocomplete(interaction) {
+  try {
+    const focused = interaction.options.getFocused(); // partial string the user has typed
+    const suggestions = await getMajorAutocomplete(focused);
+    await interaction.respond(suggestions); // Discord expects [{ name, value }]
+  } catch (err) {
+    logger.error('handleTreeAutocomplete failed:', err.message);
+    // respond with empty list so Discord doesn't show an error state
+    await interaction.respond([]).catch(() => {});
+  }
+}
+
+// Main autocomplete dispatcher
+// Add future autocomplete handlers here (e.g. course search)
+
+async function handleAutocomplete(interaction) {
+  if (interaction.commandName === 'tree') {
+    await handleTreeAutocomplete(interaction);
+  }
 }
 
 // /career
@@ -281,10 +307,11 @@ async function handleHelp(interaction) {
     '**Rutgers Academic Course Advisor — Commands**',
     '',
     '`/ask <question>` — Ask anything about courses, prereqs, professors, or degree requirements.',
-    '`/roadmap <completed> <goal> [semesters]` — Get a personalized semester-by-semester course plan.',
+    '`/roadmap [major] [current semester] [future y/n]` — Get your personalized semester-by-semester course plan.',
     '`/search <course>` — Look up a specific course by name or code (e.g. CS 344, "algorithms").',
     '`/snipe <course>` — Check WebReg seat availability and learn how to snipe open seats.',
     '`/career <goal>` — Find the Rutgers majors that best match a career goal.',
+    '`/tree [major]` — Provide a major, returns a tree for which courses to take in a tree structure.', 
     '`/help` — Show this message.',
     '',
     'All advice is based on official Rutgers Course data. Always verify on WebReg before registering.'
@@ -352,4 +379,4 @@ async function handleInteraction(interaction) {
   }
 }
 
-module.exports = { handleInteraction };
+module.exports = { handleInteraction, handleAutocomplete };

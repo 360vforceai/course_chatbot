@@ -66,36 +66,16 @@ const commands = [
     ]
   },
   {
-    name: 'tree',
-    description: 'View the degree tree for a major',
-    options: [
-      {
-        name: 'major',
-        type: 3,
-        description: 'Select your major',
-        required: true,
-        choices: [
-          { name: 'Accounting', value: 'Accounting' },
-          { name: 'BAIT', value: 'BAIT' },
-          { name: 'Biology', value: 'Biology' },
-          { name: 'Biomedical Engineering', value: 'Biomedical Engineering' },
-          { name: 'Civil Engineering', value: 'Civil Engineering' },
-          { name: 'Computer Engineering', value: 'Computer Engineering' },
-          { name: 'Computer Science', value: 'CS' },
-          { name: 'Economics', value: 'Economics' },
-          { name: 'Electrical Engineering', value: 'Electrical Engineering' },
-          { name: 'Finance', value: 'Finance' },
-          { name: 'Information Technology', value: 'Information Technology' },
-          { name: 'Leadership and Management', value: 'Leadership and Management' },
-          { name: 'Marketing', value: 'Marketing' },
-          { name: 'Math', value: 'Math' },
-          { name: 'Mechanical Engineering', value: 'Mechanical Engineering' },
-          { name: 'Nursing', value: 'Nursing' },
-          { name: 'Political Science', value: 'Political Science' },
-          { name: 'Psychology', value: 'Psychology' },
-          { name: 'Supply Chain Management', value: 'Supply Chain Management' }
-        ]
-      }
+  name: 'tree',
+  description: 'View the degree tree for a major',
+  options: [
+    {
+      name: 'major',
+      type: 3,
+      description: 'Type your major (e.g. Computer Science, Biology, Data Science)',
+      required: true,
+      autocomplete: true
+    }
     ]
   },
   {

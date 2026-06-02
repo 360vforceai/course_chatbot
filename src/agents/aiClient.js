@@ -36,11 +36,12 @@ const MODEL = 'gpt-4o-mini';
 const TOOLS = [];
 
 const KNOWN_MAJORS = [
-  'Accounting', 'BAIT', 'Biology', 'Biomedical Engineering',
+  'Accounting', 'BAIT', 'Biology', 'Biomedical Engineering', 'Business Core',
   'Civil Engineering', 'Computer Engineering', 'CS', 'Computer Science',
-  'Economics', 'Electrical Engineering', 'Finance', 'Information Technology',
-  'Leadership and Management', 'Marketing', 'Math', 'Mechanical Engineering',
-  'Nursing', 'Political Science', 'Psychology', 'Supply Chain Management'
+  'Data Science', 'Economics', 'Electrical Engineering', 'Finance',
+  'Information Technology', 'Leadership and Management', 'Marketing',
+  'Math', 'Mechanical Engineering', 'Nursing', 'Political Science',
+  'Psychology', 'Supply Chain Management'
 ];
 
 function appendTreeSuggestion(content) {
