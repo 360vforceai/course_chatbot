@@ -217,27 +217,38 @@ async function handleSnipe(interaction, userId, username) {
   }
 
   const { title, courseCode, credits, sections } = result;
-  const openSections = sections.filter(s => s.open);
-  const totalOpen = openSections.reduce((sum, s) => sum + s.openSeats, 0);
 
-  const fields = sections.slice(0, 25).map(s => ({
+  const openSections = sections.filter(s => s.open);
+  const closedSections = sections.filter(s => !s.open);
+
+  // show all open sections first, then fill remaining slots with closed ones
+  const displaySections = [
+    ...openSections,
+    ...closedSections
+  ].slice(0, 25);
+
+  const fields = displaySections.map(s => ({
     name: `${s.open ? '🟢' : '🔴'} Index ${s.index} — Section ${s.section}`,
     value: [
-      `**Seats:** ${s.openSeats} open / ${s.totalSeats} total`,
+      `**Status:** ${s.status}`,
       `**Time:** ${s.meetingTimes}`,
       `**Instructor:** ${s.instructor}`,
     ].join('\n'),
     inline: false,
   }));
 
+  const totalSections = sections.length;
+
+  const shown = displaySections.length;
+
   const embed = {
     color: openSections.length > 0 ? 0x57F287 : 0xED4245,
     title: `📋 ${courseCode} — ${title}`,
     description: openSections.length > 0
-      ? `**${totalOpen} open seat(s)** across ${openSections.length} section(s). Register on [WebReg](https://webreg.rutgers.edu) before they fill!`
-      : `**No open seats** right now.\n\nTo snipe a seat: keep checking WebReg or use a course alert tool. Seats open up when students drop — especially near the start of term.`,
+    ? `**${openSections.length} open section(s)** found.${totalSections > 25 ? ` Showing ${shown}/${totalSections} sections — open sections listed first.` : ''} Register on [WebReg](https://webreg.rutgers.edu) before they fill!`
+    : `**No open sections** right now (${totalSections} total).${totalSections > 25 ? ` Showing ${shown}/${totalSections} sections.` : ''}\n\nTo snipe a seat: keep checking WebReg or use a course alert tool.`,
     fields,
-    footer: { text: `${credits} credits · Live data from Rutgers SOC · Spring 2026` },
+    footer: { text: `${credits} credits · Live data from Rutgers SOC · Fall 2026` },
     timestamp: new Date().toISOString(),
   };
 

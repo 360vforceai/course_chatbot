@@ -234,7 +234,7 @@ async function findOccupation(goal) {
 
 const CURRENT_YEAR = '2026';
 
-const CURRENT_TERM = '1'; // 1=Spring, 7=Summer, 9=Fall
+const CURRENT_TERM = '9'; // 1=Spring, 7=Summer, 9=Fall
 
 let _subjectCache = null;
 
@@ -242,7 +242,7 @@ async function getSubjectMap() {
   if (_subjectCache) return _subjectCache;
 
   try {
-    const url = `https://classes.rutgers.edu/soc/api/subjects.json?year=${CURRENT_YEAR}&term=${CURRENT_TERM}&campus=NB`;
+    const url = `https://classes.rutgers.edu//soc/api/subjects.json?year=${CURRENT_YEAR}&term=${CURRENT_TERM}&campus=NB`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Subjects API returned ${res.status}`);
     const subjects = await res.json();
@@ -289,7 +289,7 @@ async function fetchLiveWebReg(input) {
     }
 
     let subjectCode, courseNum;
-    const colonMatch = trimmed.match(/^(\d{3}):(\d{3})$/);
+    const colonMatch = trimmed.match(/^(?:\d+:)?(\d{3}):(\d{3})$/);
     const spaceMatch = trimmed.match(/^([a-zA-Z\s]+)\s+(\d{3})$/i);
     const noSpaceMatch = trimmed.match(/^([a-zA-Z]+)(\d{3})$/i);
 
@@ -313,12 +313,13 @@ async function fetchLiveWebReg(input) {
       return { type: 'unknown_subject', input: trimmed };
     }
 
-    const url = `https://classes.rutgers.edu/soc/api/courses.json?year=${CURRENT_YEAR}&term=${CURRENT_TERM}&campus=NB&subject=${subjectCode}`;
+    const url = `https://classes.rutgers.edu//soc/api/courses.json?year=${CURRENT_YEAR}&term=${CURRENT_TERM}&campus=NB&subject=${subjectCode}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`SOC API returned ${res.status}`);
     const courses = await res.json();
 
-    const course = courses.find(c => c.courseNumber === courseNum);
+    const course = courses.find(c => c.courseNumber === courseNum && c.subject === subjectCode);
+
     if (!course) {
       return { type: 'not_found', subjectCode, courseNum };
     }
@@ -327,9 +328,8 @@ async function fetchLiveWebReg(input) {
       index: s.index,
       section: s.number,
       instructor: (s.instructors || []).map(i => i.name).join(', ') || 'TBA',
-      openSeats: s.openStatus ? s.openSeats : 0,
-      totalSeats: s.capacity,
       open: s.openStatus,
+      status: s.openStatusText || (s.openStatus ? 'OPEN' : 'CLOSED'),
       meetingTimes: (s.meetingTimes || []).map(m =>
         `${m.meetingDay || ''} ${m.startTime || ''}–${m.endTime || ''} @ ${m.buildingCode || ''} ${m.roomNumber || ''}`
           .replace(/\s+/g, ' ').trim()
