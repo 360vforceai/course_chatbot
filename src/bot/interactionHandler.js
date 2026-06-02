@@ -17,7 +17,8 @@ const {
   searchRoadmaps,
   formatRoadmapContext,
   getMajorImage,
-  findOccupation
+  findOccupation,
+  fetchLiveWebReg,
 } = require('../agents/courseClient');
 const logger = require('../utils/logger');
 
@@ -191,19 +192,57 @@ async function handleSearch(interaction, userId, username) {
 async function handleSnipe(interaction, userId, username) {
   const course = interaction.options.getString('course');
   if (!course) {
-    await interaction.reply({ content: 'Please provide a course code to check.', ephemeral: true })
-      .catch((err) => logger.error('Reply failed:', err.message));
+    await interaction.reply({ content: 'Please provide a course code to check (e.g. `CS 344` or `198:344`).', ephemeral: true })
+      .catch(err => logger.error('Reply failed:', err.message));
     return;
   }
 
-  const question =
-    `Check WebReg for current seat availability for "${course}". ` +
-    `List all open sections with their index numbers, meeting times, professor, and number of open seats. ` +
-    `If no seats are available, explain how course sniping works so the student can register when a seat opens.`;
+  const result = await fetchLiveWebReg(course);
 
-  const content = await runAdvisor(userId, username, question);
-  await sendChunks(interaction, content);
-  logger.info('Handled /snipe', { userId, username, course });
+  if (result.type === 'error') {
+    await interaction.editReply('⚠️ Could not reach the Rutgers SOC API. Try again in a moment.');
+    return;
+  }
+  if (result.type === 'index_unsupported') {
+    await interaction.editReply('Please use a course code like `CS 344` or `198:344` — index lookup isn\'t supported yet.');
+    return;
+  }
+  if (result.type === 'parse_error' || result.type === 'unknown_subject') {
+    await interaction.editReply(`Couldn't parse \`${result.input}\`. Try a format like \`CS 344\`, \`198:344\`, or \`MATH 251\`.`);
+    return;
+  }
+  if (result.type === 'not_found') {
+    await interaction.editReply(`No course found for \`${result.subjectCode}:${result.courseNum}\` this term. Double-check the course number.`);
+    return;
+  }
+
+  const { title, courseCode, credits, sections } = result;
+  const openSections = sections.filter(s => s.open);
+  const totalOpen = openSections.reduce((sum, s) => sum + s.openSeats, 0);
+
+  const fields = sections.slice(0, 25).map(s => ({
+    name: `${s.open ? '🟢' : '🔴'} Index ${s.index} — Section ${s.section}`,
+    value: [
+      `**Seats:** ${s.openSeats} open / ${s.totalSeats} total`,
+      `**Time:** ${s.meetingTimes}`,
+      `**Instructor:** ${s.instructor}`,
+    ].join('\n'),
+    inline: false,
+  }));
+
+  const embed = {
+    color: openSections.length > 0 ? 0x57F287 : 0xED4245,
+    title: `📋 ${courseCode} — ${title}`,
+    description: openSections.length > 0
+      ? `**${totalOpen} open seat(s)** across ${openSections.length} section(s). Register on [WebReg](https://webreg.rutgers.edu) before they fill!`
+      : `**No open seats** right now.\n\nTo snipe a seat: keep checking WebReg or use a course alert tool. Seats open up when students drop — especially near the start of term.`,
+    fields,
+    footer: { text: `${credits} credits · Live data from Rutgers SOC · Spring 2026` },
+    timestamp: new Date().toISOString(),
+  };
+
+  await interaction.editReply({ embeds: [embed] });
+  logger.info('Handled /snipe', { userId, username, course, openSections: openSections.length });
 }
 
 // /tree

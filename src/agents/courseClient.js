@@ -232,6 +232,125 @@ async function findOccupation(goal) {
   }
 }
 
+const CURRENT_YEAR = '2026';
+
+const CURRENT_TERM = '1'; // 1=Spring, 7=Summer, 9=Fall
+
+let _subjectCache = null;
+
+async function getSubjectMap() {
+  if (_subjectCache) return _subjectCache;
+
+  try {
+    const url = `https://classes.rutgers.edu/soc/api/subjects.json?year=${CURRENT_YEAR}&term=${CURRENT_TERM}&campus=NB`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Subjects API returned ${res.status}`);
+    const subjects = await res.json();
+
+    const map = {};
+    for (const s of subjects) {
+      const code = s.code;
+      const name = s.description;
+
+      map[name.toLowerCase()] = code;
+
+      const firstWord = name.split(' ')[0].toLowerCase();
+      if (!map[firstWord]) map[firstWord] = code;
+
+      const abbrev = name.split(' ').map(w => w[0]).join('').toLowerCase();
+      if (abbrev.length >= 2 && !map[abbrev]) map[abbrev] = code;
+
+      map[code] = code;
+    }
+
+    _subjectCache = map;
+    logger.info('Subject map loaded', { count: subjects.length });
+    return map;
+  } catch (err) {
+    logger.error('getSubjectMap failed:', err.message);
+    return {
+      'cs': '198', 'computer science': '198', 'compsci': '198',
+      'math': '640', 'mathematics': '640',
+      'physics': '750', 'phys': '750',
+      'chem': '160', 'chemistry': '160',
+      'bio': '120', 'biology': '120',
+      'ece': '332',
+      'stat': '960', 'statistics': '960',
+    };
+  }
+}
+
+async function fetchLiveWebReg(input) {
+  try {
+    const trimmed = input.trim();
+
+    if (/^\d{5}$/.test(trimmed)) {
+      return { type: 'index_unsupported' };
+    }
+
+    let subjectCode, courseNum;
+    const colonMatch = trimmed.match(/^(\d{3}):(\d{3})$/);
+    const spaceMatch = trimmed.match(/^([a-zA-Z\s]+)\s+(\d{3})$/i);
+    const noSpaceMatch = trimmed.match(/^([a-zA-Z]+)(\d{3})$/i);
+
+    if (colonMatch) {
+      [, subjectCode, courseNum] = colonMatch;
+    } else if (spaceMatch) {
+      const subjectRaw = spaceMatch[1].trim().toLowerCase();
+      courseNum = spaceMatch[2];
+      const subjectMap = await getSubjectMap();
+      subjectCode = subjectMap[subjectRaw] || null;
+    } else if (noSpaceMatch) {
+      const subjectRaw = noSpaceMatch[1].toLowerCase();
+      courseNum = noSpaceMatch[2];
+      const subjectMap = await getSubjectMap();
+      subjectCode = subjectMap[subjectRaw] || null;
+    } else {
+      return { type: 'parse_error', input: trimmed };
+    }
+
+    if (!subjectCode) {
+      return { type: 'unknown_subject', input: trimmed };
+    }
+
+    const url = `https://classes.rutgers.edu/soc/api/courses.json?year=${CURRENT_YEAR}&term=${CURRENT_TERM}&campus=NB&subject=${subjectCode}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`SOC API returned ${res.status}`);
+    const courses = await res.json();
+
+    const course = courses.find(c => c.courseNumber === courseNum);
+    if (!course) {
+      return { type: 'not_found', subjectCode, courseNum };
+    }
+
+    const sections = (course.sections || []).map(s => ({
+      index: s.index,
+      section: s.number,
+      instructor: (s.instructors || []).map(i => i.name).join(', ') || 'TBA',
+      openSeats: s.openStatus ? s.openSeats : 0,
+      totalSeats: s.capacity,
+      open: s.openStatus,
+      meetingTimes: (s.meetingTimes || []).map(m =>
+        `${m.meetingDay || ''} ${m.startTime || ''}–${m.endTime || ''} @ ${m.buildingCode || ''} ${m.roomNumber || ''}`
+          .replace(/\s+/g, ' ').trim()
+      ).join(', ') || 'TBA',
+      credits: s.credits || course.credits || '?',
+    }));
+
+    return {
+      type: 'found',
+      title: course.title,
+      courseCode: `${subjectCode}:${courseNum}`,
+      credits: course.credits || '?',
+      sections,
+    };
+
+  } catch (err) {
+    logger.error('fetchLiveWebReg failed:', err.message);
+    return { type: 'error', message: err.message };
+  }
+}
+
 
 
 module.exports = {
@@ -245,5 +364,6 @@ module.exports = {
   formatRoadmapContext,
   getMajorImage,
   findOccupation,
-  getMajorAutocomplete
+  getMajorAutocomplete,
+  fetchLiveWebReg,
 };
