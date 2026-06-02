@@ -111,6 +111,10 @@ async function registerCommands() {
     process.exit(1);
   }
 
+  console.log('Token exists:', !!token);
+  console.log('Token length:', token?.length);
+  console.log('App ID:', appId);
+
   const rest = new REST({ version: '10' }).setToken(token);
 
   try {
