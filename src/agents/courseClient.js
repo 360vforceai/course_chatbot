@@ -102,28 +102,141 @@ function formatWebRegContext(results) {
   return results.map((r) => r.content).join('\n\n');
 }
 
-//  Roadmaps 
+/// ── Roadmap lookup ────────────────────────────────────────────────────────────
 
-async function searchRoadmaps(keywords) {
+// Returns the mode ('semester' | 'picker') for a given major string,
+// so the handler knows which options to honour.
+async function getRoadmapMode(major, track = null) {
   try {
-    const embedding = await getEmbedding(keywords);
-    const { data, error } = await getSupabase().rpc('match_roadmaps', {
-      query_embedding: embedding,
-      match_threshold: RAG_THRESHOLD,
-      match_count: RAG_COUNT
-    });
-    if (error) throw error;
-    logger.info('searchRoadmaps', { keywords, found: (data || []).length });
-    return data || [];
+    let q = getSupabase()
+      .from('roadmaps')
+      .select('mode')
+      .eq('major', major);
+
+    if (track) {
+      q = q.eq('track', track);
+    } else {
+      q = q.is('track', null);
+    }
+
+    const { data, error } = await q.limit(1);
+    if (error || !data || data.length === 0) return null;
+    return data[0].mode;
   } catch (err) {
-    logger.error('searchRoadmaps failed:', err.message);
+    logger.error('getRoadmapMode failed:', err.message);
+    return null;
+  }
+}
+
+// Semester-based: fetch the row for a specific semester number.
+async function getRoadmapBySemester(major, semester, track = null) {
+  try {
+    let q = getSupabase()
+      .from('roadmaps')
+      .select('image_url, label')
+      .eq('major', major)
+      .eq('semester', semester);
+
+    if (track) {
+      q = q.eq('track', track);
+    } else {
+      q = q.is('track', null);
+    }
+
+    const { data, error } = await q.limit(1).single();
+    if (error || !data) return null;
+    return data;
+  } catch (err) {
+    logger.error('getRoadmapBySemester failed:', err.message);
+    return null;
+  }
+}
+
+// Picker-based: fetch a specific named section row.
+async function getRoadmapBySection(major, sectionLabel) {
+  try {
+    const { data, error } = await getSupabase()
+      .from('roadmaps')
+      .select('image_url, label')
+      .eq('major', major)
+      .eq('section_label', sectionLabel)
+      .limit(1)
+      .single();
+    if (error || !data) return null;
+    return data;
+  } catch (err) {
+    logger.error('getRoadmapBySection failed:', err.message);
+    return null;
+  }
+}
+
+// Autocomplete: all distinct major values (for the major option on /roadmap).
+async function getRoadmapMajorAutocomplete(query) {
+  try {
+    const db = getSupabase();
+    // Pull distinct majors — combine major + track into a display string
+    let q = db
+      .from('roadmaps')
+      .select('major, track')
+      .order('major', { ascending: true })
+      .limit(100); // fetch more than 25 so we can dedupe before slicing
+
+    if (query && query.trim().length > 0) {
+      q = q.ilike('major', `%${query.trim()}%`);
+    }
+
+    const { data, error } = await q;
+    if (error) throw error;
+
+    // Build display labels, dedupe by label
+    const seen = new Set();
+    const results = [];
+    for (const row of data || []) {
+      const label = row.track ? `${row.major} — ${row.track}` : row.major;
+      const value = row.track ? `${row.major}||${row.track}` : row.major; // pipe-delimited so handler can split
+      if (!seen.has(label)) {
+        seen.add(label);
+        results.push({ name: label, value });
+      }
+    }
+
+    return results.slice(0, 25);
+  } catch (err) {
+    logger.error('getRoadmapMajorAutocomplete failed:', err.message);
     return [];
   }
 }
 
-function formatRoadmapContext(results) {
-  if (!results || results.length === 0) return null;
-  return results.map((r) => r.content).join('\n\n');
+// Autocomplete: section_label values for a given major (for the section option).
+async function getRoadmapSectionAutocomplete(majorValue, query) {
+  try {
+    // majorValue may be "Data Science||CS" — split it
+    const [major, track] = majorValue.includes('||')
+      ? majorValue.split('||')
+      : [majorValue, null];
+
+    let q = getSupabase()
+      .from('roadmaps')
+      .select('section_label')
+      .eq('major', major)
+      .not('section_label', 'is', null)
+      .order('section_label', { ascending: true })
+      .limit(25);
+
+    if (track) q = q.eq('track', track);
+    if (query && query.trim().length > 0) q = q.ilike('section_label', `%${query.trim()}%`);
+
+    const { data, error } = await q;
+    if (error) throw error;
+
+    return (data || []).map((r) => ({
+      name: r.section_label,
+      value: r.section_label
+    }));
+  } catch (err) {
+    logger.error('getRoadmapSectionAutocomplete failed:', err.message);
+    return [];
+  }
 }
 
 //  Major Images (tree command) 
@@ -419,11 +532,14 @@ module.exports = {
   formatDegreeRequirementsContext,
   searchWebReg,
   formatWebRegContext,
-  searchRoadmaps,
-  formatRoadmapContext,
   getMajorImage,
   findOccupation,
   getMajorAutocomplete,
   fetchLiveWebReg,
   fetchRmpForCourse,
+  getRoadmapMode,
+  getRoadmapBySemester,
+  getRoadmapBySection,
+  getRoadmapMajorAutocomplete,
+  getRoadmapSectionAutocomplete
 };

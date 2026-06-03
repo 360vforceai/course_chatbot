@@ -16,28 +16,59 @@ const commands = [
     ]
   },
   {
-    name: 'roadmap',
-    description: 'Generate a personalized semester-by-semester course plan',
-    options: [
-      {
-        name: 'completed',
-        type: 3,
-        description: 'Courses you have already completed (e.g. CS 111, CS 112)',
-        required: true
-      },
-      {
-        name: 'goal',
-        type: 3,
-        description: 'Your career goal or track (e.g. AI, systems, software engineering)',
-        required: true
-      },
-      {
-        name: 'semesters',
-        type: 3,
-        description: 'How many semesters remaining (e.g. 4)',
-        required: false
-      }
-    ]
+  name: 'roadmap',
+  description: 'View your degree roadmap image and get personalized advising',
+  options: [
+    {
+      name: 'major',
+      type: 3,
+      description: 'Your major (e.g. Computer Science BA, Biology, Data Science CS)',
+      required: true,
+      autocomplete: true
+    },
+    {
+      // shown for semester-based majors; ignored by picker majors via handler logic
+      name: 'semester',
+      type: 3,
+      description: 'Which semester are you currently in? (1–8) — semester-based majors only',
+      required: false,
+      choices: [
+        { name: '1st Semester', value: '1' },
+        { name: '2nd Semester', value: '2' },
+        { name: '3rd Semester', value: '3' },
+        { name: '4th Semester', value: '4' },
+        { name: '5th Semester', value: '5' },
+        { name: '6th Semester', value: '6' },
+        { name: '7th Semester', value: '7' },
+        { name: '8th Semester', value: '8' }
+      ]
+    },
+    {
+      // semester-based only: show current or next semester image
+      name: 'future',
+      type: 3,
+      description: 'Show next semester instead of current? — semester-based majors only',
+      required: false,
+      choices: [
+        { name: 'No — show my current semester', value: 'no' },
+        { name: 'Yes — show the next semester',  value: 'yes' }
+      ]
+    },
+    {
+      // picker majors: which named section image to show
+      name: 'section',
+      type: 3,
+      description: 'Which section to view — for Data Science, Economics, Business, Accounting',
+      required: false,
+      autocomplete: true
+    },
+    {
+      name: 'question',
+      type: 3,
+      description: 'Optional: ask the advisor a question about this roadmap image',
+      required: false
+    }
+  ]
   },
   {
     name: 'search',
