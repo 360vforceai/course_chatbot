@@ -10,12 +10,13 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // ── SOC API Config ────────────────────────────────────────────────────────────
-// change these each semester as needed
+// FIX: use the same base URL as courseClient.js (classes.rutgers.edu, not sis.rutgers.edu)
+// FIX: term must match CURRENT_TERM in courseClient.js — both set to 9 (Fall)
 const SOC_YEAR = '2026';
-const SOC_TERM = '1'; // 1=Spring, 7=Summer, 9=Fall, 0=Winter
+const SOC_TERM = '9';        // 1=Spring, 7=Summer, 9=Fall — MUST match courseClient.js CURRENT_TERM
 const SOC_CAMPUS = 'NB';
-const CS_SUBJECT = '198'; // rutgers CS department code
-const SOC_BATCH_SIZE = 10; // courses to embed per batch, keep low to avoid rate limits
+const CS_SUBJECT = '198';
+const SOC_BATCH_SIZE = 10;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -34,32 +35,50 @@ async function insertWithEmbedding(table, content, metadata) {
   else console.log(`  ✓ Inserted into ${table}:`, metadata.label || metadata.code || metadata.track || '');
 }
 
-// small delay to avoid hitting openai rate limits between batches
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// ── Text cleaning ─────────────────────────────────────────────────────────────
+// FIX: strip both HTML tags AND HTML entities so prereq text is human-readable
+// e.g. "&amp;" → "&", "&#39;" → "'", "&lt;" → "<"
+
+function cleanHtml(str) {
+  if (!str) return '';
+  return str
+    .replace(/<[^>]+>/g, ' ')           // remove HTML tags
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&#\d+;/g, '')             // strip any remaining numeric entities
+    .replace(/\s+/g, ' ')               // collapse whitespace
+    .trim();
+}
+
 // ── SOC API: fetch and format live CS courses ─────────────────────────────────
 
-// formats a raw SOC API course object into the embedding text format
-// that courseClient.js expects for vector search
 function formatCourseText(course) {
   const code = `CS ${course.courseNumber}`;
   const title = course.expandedTitle || course.title || 'No title';
+  // FIX: use cleanHtml instead of bare regex so entities are also decoded
   const prereqs = course.preReqNotes
-    ? `prereqs: ${course.preReqNotes.replace(/<[^>]+>/g, '').trim()}`
+    ? `prereqs: ${cleanHtml(course.preReqNotes)}`
     : 'prereqs: none';
   const credits = course.creditsObject?.description || `${course.credits} credits`;
   const description = course.courseDescription
-    ? `description: ${course.courseDescription.replace(/<[^>]+>/g, '').trim()}`
+    ? `description: ${cleanHtml(course.courseDescription)}`
     : 'description: not available';
   return `${code} | ${title} | ${prereqs} | ${credits} | ${description}`;
 }
 
-// fetches all CS courses from the Rutgers SOC API and inserts them into course_catalog
 async function seedCourseCatalogFromAPI() {
-  const url = `https://sis.rutgers.edu/soc/api/courses.json?year=${SOC_YEAR}&term=${SOC_TERM}&campus=${SOC_CAMPUS}`;
-  console.log(`Fetching courses from SOC API...`);
+  // FIX: use classes.rutgers.edu (same host as courseClient.js fetchLiveWebReg)
+  const url = `https://classes.rutgers.edu//soc/api/courses.json?year=${SOC_YEAR}&term=${SOC_TERM}&campus=${SOC_CAMPUS}&subject=${CS_SUBJECT}`;
+  console.log(`Fetching CS courses from SOC API (${SOC_YEAR} term ${SOC_TERM})...`);
+  console.log(`URL: ${url}`);
 
   const res = await fetch(url);
   if (!res.ok) {
@@ -68,21 +87,19 @@ async function seedCourseCatalogFromAPI() {
   }
 
   const allCourses = await res.json();
-  console.log(`Total courses returned by API: ${allCourses.length}`);
-
-  // filter to only CS courses (subject 198), skip everything else like arabic, middle east etc
-  const csCourses = allCourses.filter((c) => c.subject === CS_SUBJECT);
-  console.log(`CS courses found (subject 198): ${csCourses.length}`);
+  // FIX: when querying with subject= filter, API returns courses for that subject directly
+  // but some responses still include the subject field — filter defensively
+  const csCourses = allCourses.filter((c) => !c.subject || c.subject === CS_SUBJECT);
+  console.log(`CS courses found: ${csCourses.length}`);
 
   if (csCourses.length === 0) {
-    console.error('No CS courses found, check subject filter or API response');
+    console.error('No CS courses found. Check the API URL or try without the subject filter.');
     return;
   }
 
   let inserted = 0;
   let failed = 0;
 
-  // process in batches to avoid openai rate limits
   for (let i = 0; i < csCourses.length; i += SOC_BATCH_SIZE) {
     const batch = csCourses.slice(i, i + SOC_BATCH_SIZE);
     console.log(`  Processing batch ${Math.floor(i / SOC_BATCH_SIZE) + 1} / ${Math.ceil(csCourses.length / SOC_BATCH_SIZE)}...`);
@@ -121,7 +138,6 @@ async function seedCourseCatalogFromAPI() {
       }
     }
 
-    // wait 1 second between batches to avoid rate limits
     if (i + SOC_BATCH_SIZE < csCourses.length) {
       await sleep(1000);
     }
@@ -220,13 +236,12 @@ const roadmaps = [
   }
 ];
 
-// ── Main seed function ────────────────────────────────────────────────────────
+// ── Main ──────────────────────────────────────────────────────────────────────
 
 async function seed() {
   console.log('Starting database seed...\n');
 
-  // course catalog: fetched live from the SOC API instead of hardcoded
-  console.log(`Seeding course_catalog from Rutgers SOC API (Spring ${SOC_YEAR})...`);
+  console.log(`Seeding course_catalog from Rutgers SOC API (${SOC_YEAR} term ${SOC_TERM})...`);
   await seedCourseCatalogFromAPI();
 
   console.log(`\nSeeding degree_requirements (${degreeRequirements.length} entries)...`);
@@ -239,7 +254,7 @@ async function seed() {
     await insertWithEmbedding('roadmaps', row.content, row.metadata);
   }
 
-  console.log('\nDone! webreg table is left empty — populate it each semester with live section data.');
+  console.log('\nDone! webreg table is left empty — live data comes from the SOC API via /snipe.');
 }
 
 seed().catch(console.error);

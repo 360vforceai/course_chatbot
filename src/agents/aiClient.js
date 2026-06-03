@@ -32,8 +32,27 @@ Help students navigate WebReg and course registration.
 const SYSTEM_PROMPT = process.env.SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT;
 const MODEL = 'gpt-4o-mini';
 
-// Tools can be extended here (e.g. live WebReg scraper, RateMyProfessor API)
 const TOOLS = [];
+
+// made a fix: only suggest /tree when the response is specifically about choosing or
+// comparing degree programs — not just any mention of a major name in passing.
+const TREE_TRIGGER_PHRASES = [
+  'major in',
+  'majoring in',
+  'declare a major',
+  'switch to',
+  'degree in',
+  'bs in',
+  'ba in',
+  'program in',
+  'pursue a',
+  'consider a',
+  'recommend the',
+  'best major',
+  'which major',
+  'your major',
+  'the major',
+];
 
 const KNOWN_MAJORS = [
   'Accounting', 'BAIT', 'Biology', 'Biomedical Engineering', 'Business Core',
@@ -46,6 +65,8 @@ const KNOWN_MAJORS = [
 
 function appendTreeSuggestion(content) {
   const lower = content.toLowerCase();
+  const hasTrigger = TREE_TRIGGER_PHRASES.some((phrase) => lower.includes(phrase));
+  if (!hasTrigger) return content;
   const matched = KNOWN_MAJORS.find((m) => lower.includes(m.toLowerCase()));
   if (!matched) return content;
   return content + `\n\n💡 Want to see the full degree tree? Use \`/tree\` and select **${matched}**.`;
@@ -66,14 +87,9 @@ function getClient() {
 }
 
 function executeToolCall(name, args) {
-  // Placeholder for future tools:
-  // if (name === 'search_webreg') { return queryWebReg(args); }
-  // if (name === 'search_ratemyprofessor') { return queryRMP(args); }
   return `Unknown tool: ${name}`;
 }
 
-// Sanitizes conversation history to ensure tool_calls and tool responses are properly paired.
-// Drops orphaned tool messages that have no corresponding assistant tool_call.
 function sanitizeHistoryMessages(messages) {
   const safeMessages = [];
   let pendingToolCallIds = null;
@@ -120,10 +136,6 @@ function sanitizeHistoryMessages(messages) {
 
   return safeMessages;
 }
-
-
-// Router Agent
-// Decides which Supabase tables to query and generates search keywords.
 
 const ROUTER_SYSTEM_PROMPT = `You are a query router for a Rutgers CS course advising Discord bot.
 
@@ -174,12 +186,6 @@ Given a conversation history and the user's latest question, output a JSON objec
 
 Output ONLY valid JSON, no explanation, no markdown fences.`;
 
-/**
- * Router agent: decides which tables to search and what keywords to use.
- * @param {Array} shortTermHistory - recent conversation messages
- * @param {string} question - user's current question
- * @returns {Promise<{ tables: string[], keywords: string }>}
- */
 async function getRouterDecision(shortTermHistory, question) {
   const fallback = {
     tables: ['course_catalog', 'degree_requirements', 'roadmaps'],
@@ -231,21 +237,6 @@ async function getRouterDecision(shortTermHistory, question) {
   }
 }
 
-
-// Main response function
-
-/**
- * Generates a response from the course advisor.
- * @param {Array} messages - full conversation history including latest user message
- * @param {Object} options
- * @param {string|null} options.ragContext                - community memory results
- * @param {string|null} options.courseCatalogContext      - RAG results from course_catalog
- * @param {string|null} options.degreeRequirementsContext - RAG results from degree_requirements
- * @param {string|null} options.webregContext             - RAG results from webreg
- * @param {string|null} options.roadmapContext            - RAG results from roadmaps
- * @param {string|null} options.keywords                  - search keywords used
- * @returns {Promise<{ content: string, messages: Array }>}
- */
 async function getResponse(
   messages,
   {
@@ -254,6 +245,7 @@ async function getResponse(
     degreeRequirementsContext = null,
     webregContext = null,
     roadmapContext = null,
+    professorContext = null,
     keywords = null
   } = {}
 ) {
@@ -263,6 +255,7 @@ async function getResponse(
     hasRequirements: !!degreeRequirementsContext,
     hasWebreg: !!webregContext,
     hasRoadmap: !!roadmapContext,
+    hasProfessor: !!professorContext,
     hasRag: !!ragContext
   });
 
@@ -312,6 +305,17 @@ ${roadmapContext}
 → Always respect prereq chains shown in the roadmap.`);
   }
 
+  if (professorContext) {
+    contextParts.push(`## RateMyProfessor Data
+${keywordsLine}The following is real RateMyProfessor data for Rutgers professors. Use it to answer questions about professor ratings, teaching style, and difficulty.
+
+${professorContext}
+
+→ Always mention both the rating AND difficulty score — a 4.5 rated but 4.8 difficulty professor is very different from a 4.5 rated 2.1 difficulty professor.
+→ If would-take-again % is available, include it.
+→ Quote specific student tags (e.g. "Clear lectures", "Tough exams") for context.`);
+  }
+
   if (ragContext) {
     contextParts.push(`## Community Memory
 ${keywordsLine}The following are relevant things other students have previously shared in this Discord server.
@@ -319,11 +323,6 @@ ${keywordsLine}The following are relevant things other students have previously 
 ${ragContext}`);
   }
 
-  // Message order:
-  // 1. System prompt (role & rules)
-  // 2. Short-term history (all turns except the latest user message)
-  // 3. Context system message (RAG results)
-  // 4. Latest user message
   let apiMessages;
   if (contextParts.length > 0) {
     const contextMessage = {

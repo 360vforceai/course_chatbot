@@ -16,9 +16,9 @@ const commands = [
     ]
   },
   {
-    name:'roadmap',  
-    description:'Generate a personalized semester-by-semester course plan',
-    options:[
+    name: 'roadmap',
+    description: 'Generate a personalized semester-by-semester course plan',
+    options: [
       {
         name: 'completed',
         type: 3,
@@ -26,17 +26,16 @@ const commands = [
         required: true
       },
       {
-        name:'goal',
-        type:3,
-        description:'Your career goal or track (e.g. AI, systems, software engineering)',
-        required:true
+        name: 'goal',
+        type: 3,
+        description: 'Your career goal or track (e.g. AI, systems, software engineering)',
+        required: true
       },
       {
         name: 'semesters',
         type: 3,
         description: 'How many semesters remaining (e.g. 4)',
-        required:false
-
+        required: false
       }
     ]
   },
@@ -44,57 +43,67 @@ const commands = [
     name: 'search',
     description: 'Look up a specific course',
     options: [
-
       {
         name: 'course',
         type: 3,
-        description: 'Course name or code(e.g. CS 344 or "algorithms")',
+        description: 'Course name or code (e.g. CS 344 or "algorithms")',
         required: true
       }
     ]
   },
   {
     name: 'snipe',
-    description: 'Check seat availability for a course on Webreg',
+    description: 'Check seat availability for a course on WebReg',
     options: [
       {
         name: 'course',
         type: 3,
         description: 'Course code to check (e.g. CS 416)',
-        required:true
+        required: true
       }
     ]
   },
   {
-  name: 'tree',
-  description: 'View the degree tree for a major',
-  options: [
-    {
-      name: 'major',
-      type: 3,
-      description: 'Type your major (e.g. Computer Science, Biology, Data Science)',
-      required: true,
-      autocomplete: true
-    }
+    name: 'rmp',
+    description: 'Look up RateMyProfessor ratings for professors teaching a course this semester',
+    options: [
+      {
+        name: 'course',
+        type: 3,
+        description: 'Course code (e.g. CS 416, MATH 251, 198:416)',
+        required: true
+      }
+    ]
+  },
+  {
+    name: 'tree',
+    description: 'View the degree tree for a major',
+    options: [
+      {
+        name: 'major',
+        type: 3,
+        description: 'Type your major (e.g. Computer Science, Biology, Data Science)',
+        required: true,
+        autocomplete: true
+      }
     ]
   },
   {
     name: 'career',
     description: 'Find majors that match a career goal',
     options: [
-    {
-      name: 'goal',
-      type: 3,
-      description: 'Career you want (e.g. software engineer, lawyer, actuary)',
-      required: true
-    }
+      {
+        name: 'goal',
+        type: 3,
+        description: 'Career you want (e.g. software engineer, lawyer, actuary)',
+        required: true
+      }
     ]
   },
   {
     name: 'help',
     description: 'Show all available commands',
     options: []
-
   }
 ];
 

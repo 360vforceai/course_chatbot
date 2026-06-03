@@ -1,7 +1,6 @@
 const { isRateLimited, recordRequest, getRemainingSeconds } = require('../utils/rateLimiter');
 const { splitMessage } = require('../utils/messageUtils');
 const { getResponse, getRouterDecision } = require('../agents/aiClient');
-const { getMajorAutocomplete } = require('../agents/courseClient'); 
 const {
   getShortTermHistory,
   searchLongTermMemories,
@@ -18,7 +17,9 @@ const {
   formatRoadmapContext,
   getMajorImage,
   findOccupation,
+  getMajorAutocomplete,
   fetchLiveWebReg,
+  fetchRmpForCourse,
 } = require('../agents/courseClient');
 const logger = require('../utils/logger');
 
@@ -33,7 +34,7 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000);
 
-//Shared helper: send chunks back to Discord
+// Shared helper: send chunks back to Discord 
 
 async function sendChunks(interaction, content) {
   const chunks = splitMessage(content);
@@ -53,16 +54,14 @@ async function sendChunks(interaction, content) {
   }
 }
 
-//Shared helper: run RAG + getResponse for a question string 
+// Shared helper: run RAG + getResponse for a question string 
 
 async function runAdvisor(userId, username, question) {
-  // Step 1: get history, then let router decide which tables + keywords to use
   const shortTermHistory = await getShortTermHistory(userId);
   const { tables, keywords } = await getRouterDecision(shortTermHistory, question);
 
   logger.info('Router decision applied', { userId, tables, keywords });
 
-  // Step 2: concurrent searches across all relevant tables
   const [
     { memories, embedding },
     courseCatalogResults,
@@ -91,7 +90,6 @@ async function runAdvisor(userId, username, question) {
       : Promise.resolve([])
   ]);
 
-  // Step 3: format results into context strings
   const ragContext = memories.length > 0
     ? memories.map((m) => {
         const name = m.metadata?.username || `user ID ${m.user_id}`;
@@ -110,7 +108,6 @@ async function runAdvisor(userId, username, question) {
   if (webregContext) logger.info('RAG injected webreg', { userId, count: webregResults.length });
   if (roadmapContext) logger.info('RAG injected roadmaps', { userId, count: roadmapResults.length });
 
-  // Step 4: build message list and call the advisor
   const messages = [...shortTermHistory, { role: 'user', content: question }];
 
   const { content } = await getResponse(messages, {
@@ -122,14 +119,12 @@ async function runAdvisor(userId, username, question) {
     keywords
   });
 
-  // Save to short-term history in the background — don't block the reply
   saveMemoryAsync(userId, username, question, content, embedding);
 
   return content;
 }
 
 // /ask 
-// General course question: routes through the full RAG pipeline.
 
 async function handleAsk(interaction, userId, username) {
   const question = interaction.options.getString('question');
@@ -138,15 +133,12 @@ async function handleAsk(interaction, userId, username) {
       .catch((err) => logger.error('Reply failed:', err.message));
     return;
   }
-
   const content = await runAdvisor(userId, username, question);
   await sendChunks(interaction, content);
   logger.info('Handled /ask', { userId, username, questionLength: question.length });
 }
 
 //  /roadmap 
-// Generates a personalized semester-by-semester plan.
-// Options: completed (required), goal (required), semesters (optional)
 
 async function handleRoadmap(interaction, userId, username) {
   const completed = interaction.options.getString('completed');
@@ -166,7 +158,6 @@ async function handleRoadmap(interaction, userId, username) {
 }
 
 //  /search 
-// Looks up a specific course by name or code.
 
 async function handleSearch(interaction, userId, username) {
   const course = interaction.options.getString('course');
@@ -187,7 +178,6 @@ async function handleSearch(interaction, userId, username) {
 }
 
 //  /snipe 
-// Checks WebReg seat availability for a course.
 
 async function handleSnipe(interaction, userId, username) {
   const course = interaction.options.getString('course');
@@ -217,15 +207,11 @@ async function handleSnipe(interaction, userId, username) {
   }
 
   const { title, courseCode, credits, sections } = result;
-
   const openSections = sections.filter(s => s.open);
   const closedSections = sections.filter(s => !s.open);
-
-  // show all open sections first, then fill remaining slots with closed ones
-  const displaySections = [
-    ...openSections,
-    ...closedSections
-  ].slice(0, 25);
+  const displaySections = [...openSections, ...closedSections].slice(0, 25);
+  const totalSections = sections.length;
+  const shown = displaySections.length;
 
   const fields = displaySections.map(s => ({
     name: `${s.open ? '🟢' : '🔴'} Index ${s.index} — Section ${s.section}`,
@@ -237,18 +223,14 @@ async function handleSnipe(interaction, userId, username) {
     inline: false,
   }));
 
-  const totalSections = sections.length;
-
-  const shown = displaySections.length;
-
   const embed = {
     color: openSections.length > 0 ? 0x57F287 : 0xED4245,
     title: `📋 ${courseCode} — ${title}`,
     description: openSections.length > 0
-    ? `**${openSections.length} open section(s)** found.${totalSections > 25 ? ` Showing ${shown}/${totalSections} sections — open sections listed first.` : ''} Register on [WebReg](https://webreg.rutgers.edu) before they fill!`
-    : `**No open sections** right now (${totalSections} total).${totalSections > 25 ? ` Showing ${shown}/${totalSections} sections.` : ''}\n\nTo snipe a seat: keep checking WebReg or use a course alert tool.`,
+      ? `**${openSections.length} open section(s)** found.${totalSections > 25 ? ` Showing ${shown}/${totalSections} sections — open sections listed first.` : ''} Register on [WebReg](https://webreg.rutgers.edu) before they fill!`
+      : `**No open sections** right now (${totalSections} total).${totalSections > 25 ? ` Showing ${shown}/${totalSections} sections.` : ''}\n\nTo snipe a seat: keep checking WebReg or use a course alert tool.`,
     fields,
-    footer: { text: `${credits} credits · Live data from Rutgers SOC · Fall 2026` },
+    footer: { text: `${credits} credits · Live data from Rutgers SOC` },
     timestamp: new Date().toISOString(),
   };
 
@@ -256,8 +238,106 @@ async function handleSnipe(interaction, userId, username) {
   logger.info('Handled /snipe', { userId, username, course, openSections: openSections.length });
 }
 
-// /tree
-// generates the tree for the user with the desired major
+//  /rmp 
+// Chains: WebReg (get instructors) → RateMyProfessor (get ratings)
+
+async function handleRmp(interaction, userId, username) {
+  const courseInput = interaction.options.getString('course');
+
+  const { webregResult, rmpResults } = await fetchRmpForCourse(courseInput);
+
+  if (webregResult.type === 'error') {
+    await interaction.editReply('⚠️ Could not reach the Rutgers SOC API. Try again in a moment.');
+    return;
+  }
+  if (webregResult.type === 'parse_error' || webregResult.type === 'unknown_subject') {
+    await interaction.editReply(
+      `Couldn't parse \`${webregResult.input}\`. Try a format like \`CS 416\`, \`198:416\`, or \`MATH 251\`.`
+    );
+    return;
+  }
+  if (webregResult.type === 'not_found') {
+    await interaction.editReply(
+      `No course found for \`${courseInput}\` this term. Double-check the course number.`
+    );
+    return;
+  }
+
+  const { title, courseCode } = webregResult;
+
+  if (rmpResults.length === 0) {
+    await interaction.editReply(
+      `**${courseCode} — ${title}**\n\nNo instructors assigned yet for this term — check back closer to registration.`
+    );
+    return;
+  }
+
+  const fields = rmpResults.map(({ instructor, lastName, rmpData }) => {
+    if (!rmpData) {
+      return {
+        name: `👤 ${instructor}`,
+        value: `No RateMyProfessor profile found. Try searching [manually](https://www.ratemyprofessors.com/search/professors/825?q=${encodeURIComponent(lastName)}).`,
+        inline: false
+      };
+    }
+
+    const name = `${rmpData.firstName} ${rmpData.lastName}`;
+    const rating = rmpData.avgRating?.toFixed(1) ?? 'N/A';
+    const difficulty = rmpData.avgDifficulty?.toFixed(1) ?? 'N/A';
+    const wouldTakeAgain = rmpData.wouldTakeAgainPercent >= 0
+      ? `${Math.round(rmpData.wouldTakeAgainPercent)}%`
+      : 'N/A';
+    const numRatings = rmpData.numRatings ?? 0;
+    const ratingEmoji = rmpData.avgRating >= 4 ? '🟢' : rmpData.avgRating >= 3 ? '🟡' : '🔴';
+
+    const tags = (rmpData.teacherRatingTags || [])
+      .sort((a, b) => b.tagCount - a.tagCount)
+      .slice(0, 4)
+      .map(t => t.tagName)
+      .join(' · ');
+
+    const topComment = (rmpData.ratings?.edges || [])
+      .map(e => e.node)
+      .find(r => r.comment && r.comment.trim().length > 15);
+
+    const commentLine = topComment
+      ? `\n> "${topComment.comment.trim().slice(0, 150)}${topComment.comment.length > 150 ? '...' : ''}"`
+      : '';
+
+    const rmpLink = `https://www.ratemyprofessors.com/professor/${rmpData.id.replace('Teacher-', '')}`;
+
+    return {
+      name: `${ratingEmoji} ${name} (WebReg: ${instructor})`,
+      value: [
+        `**Rating:** ${rating}/5 · **Difficulty:** ${difficulty}/5 · **Would Take Again:** ${wouldTakeAgain} *(${numRatings} ratings)*`,
+        tags ? `**Tags:** ${tags}` : '',
+        commentLine,
+        `[View on RMP](${rmpLink})`
+      ].filter(Boolean).join('\n'),
+      inline: false
+    };
+  });
+
+  const bestRating = rmpResults
+    .filter(r => r.rmpData)
+    .reduce((max, r) => Math.max(max, r.rmpData.avgRating || 0), 0);
+  const color = bestRating >= 4 ? 0x57F287 : bestRating >= 3 ? 0xFEE75C : 0xED4245;
+
+  const embed = {
+    color,
+    title: `⭐ RateMyProfessor — ${courseCode}: ${title}`,
+    description: `Professors currently teaching this course based on live WebReg data.`,
+    fields,
+    footer: { text: 'Ratings from RateMyProfessor · Sections from Rutgers SOC' },
+    timestamp: new Date().toISOString()
+  };
+
+  await interaction.editReply({ embeds: [embed] });
+  logger.info('Handled /rmp', { userId, username, courseInput, instructors: rmpResults.length });
+}
+
+//  /tree 
+
 async function handleTree(interaction) {
   const major = interaction.options.getString('major');
   const imageResult = await getMajorImage(major);
@@ -275,36 +355,14 @@ async function handleTree(interaction) {
       image: { url: imageResult.image_url }
     }]
   });
+
+  logger.info('Handled /tree', { major });
 }
 
-// /tree autocomplete
-// Fires as the user types in the major field — returns filtered label suggestions.
+//  /career 
 
-async function handleTreeAutocomplete(interaction) {
-  try {
-    const focused = interaction.options.getFocused(); // partial string the user has typed
-    const suggestions = await getMajorAutocomplete(focused);
-    await interaction.respond(suggestions); // Discord expects [{ name, value }]
-  } catch (err) {
-    logger.error('handleTreeAutocomplete failed:', err.message);
-    // respond with empty list so Discord doesn't show an error state
-    await interaction.respond([]).catch(() => {});
-  }
-}
-
-// Main autocomplete dispatcher
-// Add future autocomplete handlers here (e.g. course search)
-
-async function handleAutocomplete(interaction) {
-  if (interaction.commandName === 'tree') {
-    await handleTreeAutocomplete(interaction);
-  }
-}
-
-// /career
 async function handleCareer(interaction, userId, username) {
   const goal = interaction.options.getString('goal');
-
   const occupation = await findOccupation(goal);
 
   if (!occupation) {
@@ -331,26 +389,12 @@ async function handleCareer(interaction, userId, username) {
   Only recommend Rutgers-New Brunswick majors, minors, certificates, or concentrations that actually exist. Do not invent programs.
   `;
 
-  const content = await runAdvisor(
-    userId,
-    username,
-    question)
-  ;
-
+  const content = await runAdvisor(userId, username, question);
   await sendChunks(interaction, content);
-
-  logger.info('Handled /career', {
-    userId,
-    username,
-    goal,
-    majors: occupation.recommended_majors
-  });
-
-
+  logger.info('Handled /career', { userId, username, goal, majors: occupation.recommended_majors });
 }
 
-//  /help 
-// Shows all available commands — no RAG needed, just a static reply.
+// /help 
 
 async function handleHelp(interaction) {
   const helpText = [
@@ -360,8 +404,9 @@ async function handleHelp(interaction) {
     '`/roadmap [major] [current semester] [future y/n]` — Get your personalized semester-by-semester course plan.',
     '`/search <course>` — Look up a specific course by name or code (e.g. CS 344, "algorithms").',
     '`/snipe <course>` — Check WebReg seat availability and learn how to snipe open seats.',
+    '`/rmp <course>` — Look up RateMyProfessor ratings for professors teaching a course this semester.',
     '`/career <goal>` — Find the Rutgers majors that best match a career goal.',
-    '`/tree [major]` — Provide a major, returns a tree for which courses to take in a tree structure.', 
+    '`/tree [major]` — Provide a major, returns a tree for which courses to take in a tree structure.',
     '`/help` — Show this message.',
     '',
     'All advice is based on official Rutgers Course data. Always verify on WebReg before registering.'
@@ -373,13 +418,35 @@ async function handleHelp(interaction) {
   logger.info('Handled /help');
 }
 
-//  Main dispatcher 
+// Autocomplete dispatcher 
+
+async function handleAutocomplete(interaction) {
+  if (interaction.commandName === 'tree') {
+    try {
+      const focused = interaction.options.getFocused();
+      const suggestions = await getMajorAutocomplete(focused);
+      await interaction.respond(suggestions);
+    } catch (err) {
+      logger.error('handleTreeAutocomplete failed:', err.message);
+      await interaction.respond([]).catch(() => {});
+    }
+  }
+}
+
+// Main dispatcher 
 
 async function handleInteraction(interaction) {
+  // FIX: handle autocomplete BEFORE isChatInputCommand check —
+  // autocomplete interactions return false for isChatInputCommand()
+  if (interaction.isAutocomplete()) {
+    await handleAutocomplete(interaction);
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   const { commandName } = interaction;
-  const validCommands = ['ask', 'roadmap', 'search', 'snipe', 'tree','career','help'];
+  const validCommands = ['ask', 'roadmap', 'search', 'snipe', 'rmp', 'tree', 'career', 'help'];
   if (!validCommands.includes(commandName)) return;
 
   const userId = interaction.user.id;
@@ -387,14 +454,12 @@ async function handleInteraction(interaction) {
 
   logger.info('Interaction received', { userId, command: commandName, id: interaction.id });
 
-  // Deduplication: skip if we've already handled this interaction ID
   if (handledInteractions.has(interaction.id)) {
     logger.warn('Duplicate interaction skipped', { id: interaction.id });
     return;
   }
   handledInteractions.set(interaction.id, Date.now());
 
-  // Rate limiting
   if (isRateLimited(userId)) {
     const remaining = getRemainingSeconds(userId);
     await interaction.reply({
@@ -405,7 +470,6 @@ async function handleInteraction(interaction) {
   }
   recordRequest(userId);
 
-  // Defer the reply so Discord doesn't time out while we fetch data
   try {
     await interaction.deferReply();
   } catch (err) {
@@ -418,9 +482,10 @@ async function handleInteraction(interaction) {
     if (commandName === 'roadmap') await handleRoadmap(interaction, userId, username);
     if (commandName === 'search')  await handleSearch(interaction, userId, username);
     if (commandName === 'snipe')   await handleSnipe(interaction, userId, username);
+    if (commandName === 'rmp')     await handleRmp(interaction, userId, username);
+    if (commandName === 'tree')    await handleTree(interaction);
     if (commandName === 'career')  await handleCareer(interaction, userId, username);
     if (commandName === 'help')    await handleHelp(interaction);
-    if (interaction.commandName === 'tree') await handleTree(interaction);
   } catch (err) {
     logger.error('Interaction handler error:', err.message);
     await interaction
