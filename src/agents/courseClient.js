@@ -1,7 +1,9 @@
 const { createClient } = require('@supabase/supabase-js');
 const logger = require('../utils/logger');
 
+// Similarity threshold: results below this score are discarded
 const RAG_THRESHOLD = 0.4;
+// Max results returned per table search
 const RAG_COUNT = 6;
 
 let supabase = null;
@@ -18,7 +20,7 @@ function getSupabase() {
   return supabase;
 }
 
-// Shared embedding helper 
+// ── Shared embedding helper ───────────────────────────────────────────────────
 
 async function getEmbedding(text) {
   const { getClient } = require('./aiClient');
@@ -30,7 +32,10 @@ async function getEmbedding(text) {
   return res.data[0].embedding;
 }
 
-// Course Catalog 
+// ── Course Catalog ────────────────────────────────────────────────────────────
+// Table: course_catalog
+// Embedding format: "CS 344 | Design and Analysis of Computer Algorithms |
+//   prereqs: CS 112, CS 206, MATH 250 | 4 credits | description: ..."
 
 async function searchCourseCatalog(keywords) {
   try {
@@ -54,7 +59,10 @@ function formatCourseCatalogContext(results) {
   return results.map((r) => r.content).join('\n\n');
 }
 
-//  Degree Requirements 
+// ── Degree Requirements ───────────────────────────────────────────────────────
+// Table: degree_requirements
+// Embedding format: "CS Major Core Requirement: CS 111, CS 112, CS 205, CS 206,
+//   CS 211 | Track: Systems | Electives: ..."
 
 async function searchDegreeRequirements(keywords) {
   try {
@@ -78,7 +86,10 @@ function formatDegreeRequirementsContext(results) {
   return results.map((r) => r.content).join('\n\n');
 }
 
-//  WebReg 
+// ── WebReg ────────────────────────────────────────────────────────────────────
+// Table: webreg
+// Embedding format: "CS 416:01 | Operating Systems Design | Prof. Tjang |
+//   Mon/Wed 10:20-11:40 | Index: 12345 | Open seats: 4 | Credits: 3"
 
 async function searchWebReg(keywords) {
   try {
@@ -102,153 +113,45 @@ function formatWebRegContext(results) {
   return results.map((r) => r.content).join('\n\n');
 }
 
-/// ── Roadmap lookup ────────────────────────────────────────────────────────────
+// ── Roadmaps ──────────────────────────────────────────────────────────────────
+// Table: roadmaps
+// Embedding format: "CS Track: Artificial Intelligence | Semester 1: CS 111,
+//   MATH 151 | Semester 2: CS 112, MATH 152 | ..."
 
-// Returns the mode ('semester' | 'picker') for a given major string,
-// so the handler knows which options to honour.
-async function getRoadmapMode(major, track = null) {
+async function searchRoadmaps(keywords) {
   try {
-    let q = getSupabase()
-      .from('roadmaps')
-      .select('mode')
-      .eq('major', major);
-
-    if (track) {
-      q = q.eq('track', track);
-    } else {
-      q = q.is('track', null);
-    }
-
-    const { data, error } = await q.limit(1);
-    if (error || !data || data.length === 0) return null;
-    return data[0].mode;
-  } catch (err) {
-    logger.error('getRoadmapMode failed:', err.message);
-    return null;
-  }
-}
-
-// Semester-based: fetch the row for a specific semester number.
-async function getRoadmapBySemester(major, semester, track = null) {
-  try {
-    let q = getSupabase()
-      .from('roadmaps')
-      .select('image_url, label')
-      .eq('major', major)
-      .eq('semester', semester);
-
-    if (track) {
-      q = q.eq('track', track);
-    } else {
-      q = q.is('track', null);
-    }
-
-    const { data, error } = await q.limit(1).single();
-    if (error || !data) return null;
-    return data;
-  } catch (err) {
-    logger.error('getRoadmapBySemester failed:', err.message);
-    return null;
-  }
-}
-
-// Picker-based: fetch a specific named section row.
-async function getRoadmapBySection(major, sectionLabel) {
-  try {
-    const { data, error } = await getSupabase()
-      .from('roadmaps')
-      .select('image_url, label')
-      .eq('major', major)
-      .eq('section_label', sectionLabel)
-      .limit(1)
-      .single();
-    if (error || !data) return null;
-    return data;
-  } catch (err) {
-    logger.error('getRoadmapBySection failed:', err.message);
-    return null;
-  }
-}
-
-// Autocomplete: all distinct major values (for the major option on /roadmap).
-async function getRoadmapMajorAutocomplete(query) {
-  try {
-    const db = getSupabase();
-    // Pull distinct majors — combine major + track into a display string
-    let q = db
-      .from('roadmaps')
-      .select('major, track')
-      .order('major', { ascending: true })
-      .limit(100); // fetch more than 25 so we can dedupe before slicing
-
-    if (query && query.trim().length > 0) {
-      q = q.ilike('major', `%${query.trim()}%`);
-    }
-
-    const { data, error } = await q;
+    const embedding = await getEmbedding(keywords);
+    const { data, error } = await getSupabase().rpc('match_course_roadmaps', {
+      query_embedding: embedding,
+      match_threshold: RAG_THRESHOLD,
+      match_count: RAG_COUNT
+    });
     if (error) throw error;
-
-    // Build display labels, dedupe by label
-    const seen = new Set();
-    const results = [];
-    for (const row of data || []) {
-      const label = row.track ? `${row.major} — ${row.track}` : row.major;
-      const value = row.track ? `${row.major}||${row.track}` : row.major; // pipe-delimited so handler can split
-      if (!seen.has(label)) {
-        seen.add(label);
-        results.push({ name: label, value });
-      }
-    }
-
-    return results.slice(0, 25);
+    logger.info('searchRoadmaps', { keywords, found: (data || []).length });
+    return data || [];
   } catch (err) {
-    logger.error('getRoadmapMajorAutocomplete failed:', err.message);
+    logger.error('searchRoadmaps failed:', err.message);
     return [];
   }
 }
 
-// Autocomplete: section_label values for a given major (for the section option).
-async function getRoadmapSectionAutocomplete(majorValue, query) {
-  try {
-    // majorValue may be "Data Science||CS" — split it
-    const [major, track] = majorValue.includes('||')
-      ? majorValue.split('||')
-      : [majorValue, null];
-
-    let q = getSupabase()
-      .from('roadmaps')
-      .select('section_label')
-      .eq('major', major)
-      .not('section_label', 'is', null)
-      .order('section_label', { ascending: true })
-      .limit(25);
-
-    if (track) q = q.eq('track', track);
-    if (query && query.trim().length > 0) q = q.ilike('section_label', `%${query.trim()}%`);
-
-    const { data, error } = await q;
-    if (error) throw error;
-
-    return (data || []).map((r) => ({
-      name: r.section_label,
-      value: r.section_label
-    }));
-  } catch (err) {
-    logger.error('getRoadmapSectionAutocomplete failed:', err.message);
-    return [];
-  }
+function formatRoadmapContext(results) {
+  if (!results || results.length === 0) return null;
+  return results.map((r) => r.content).join('\n\n');
 }
 
-//  Major Images (tree command) 
+// -- Trees 
+// Table: major_images
 
 async function getMajorImage(input) {
   try {
     const { data, error } = await getSupabase()
       .from('major_images')
       .select('image_url, label')
-      .eq('label', input.trim())
+      .eq('label', input.trim())   // match the exact label from autocomplete
       .limit(1)
       .single();
+
     if (error || !data) return null;
     return data;
   } catch (err) {
@@ -256,6 +159,10 @@ async function getMajorImage(input) {
     return null;
   }
 }
+
+// ── Tree Autocomplete ─────────────────────────────────────────────────────────
+// Queries major_images for labels matching the user's partial input.
+// Returns up to 25 { name, value } pairs for Discord autocomplete.
 
 async function getMajorAutocomplete(query) {
   try {
@@ -265,72 +172,97 @@ async function getMajorAutocomplete(query) {
       .select('label')
       .order('label', { ascending: true })
       .limit(25);
+
+    // Only filter when the user has typed something
     if (query && query.trim().length > 0) {
       supabaseQuery = supabaseQuery.ilike('label', `%${query.trim()}%`);
     }
+
     const { data, error } = await supabaseQuery;
     if (error) throw error;
-    return (data || []).map((row) => ({ name: row.label, value: row.label }));
+
+    // Discord autocomplete expects [{ name, value }]
+    return (data || []).map((row) => ({
+      name: row.label,   // displayed to user
+      value: row.label   // sent back as the option value on submit
+    }));
   } catch (err) {
     logger.error('getMajorAutocomplete failed:', err.message);
     return [];
   }
 }
 
-//  occupations (career command) 
-
 async function findOccupation(goal) {
   try {
-    const normalizedGoal = goal?.trim();
-    if (!normalizedGoal) return null;
-    logger.info('Searching occupations', { goal: normalizedGoal });
 
+    const normalizedGoal = goal?.trim();
+    
+    if (!normalizedGoal) return null;
+
+    logger.info('Searching occupations', {
+    goal: normalizedGoal
+    });
+
+    // Exact match first
     let { data } = await getSupabase()
       .from('occupations')
       .select('*')
       .ilike('occupation', normalizedGoal)
       .limit(1);
+
     if (data?.length) return data[0];
 
+    // Partial match second
     ({ data } = await getSupabase()
       .from('occupations')
       .select('*')
-      .ilike('occupation', `%${normalizedGoal}%`)
+      .ilike('occupation',`%${normalizedGoal}%`)
       .limit(1));
+
     if (data?.length) return data[0];
 
     return null;
-  } catch (err) {
-    logger.error('findOccupation failed:', err.message);
-    return null;
+  }
+
+  catch (err) {
+    
+  logger.error('findOccupation failed:', err.message);
+  return null;
+
   }
 }
 
-// live webreg
-
 const CURRENT_YEAR = '2026';
+
 const CURRENT_TERM = '9'; // 1=Spring, 7=Summer, 9=Fall
 
 let _subjectCache = null;
 
 async function getSubjectMap() {
   if (_subjectCache) return _subjectCache;
+
   try {
     const url = `https://classes.rutgers.edu//soc/api/subjects.json?year=${CURRENT_YEAR}&term=${CURRENT_TERM}&campus=NB`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Subjects API returned ${res.status}`);
     const subjects = await res.json();
+
     const map = {};
     for (const s of subjects) {
       const code = s.code;
       const name = s.description;
+
       map[name.toLowerCase()] = code;
+
       const firstWord = name.split(' ')[0].toLowerCase();
       if (!map[firstWord]) map[firstWord] = code;
+
       const abbrev = name.split(' ').map(w => w[0]).join('').toLowerCase();
       if (abbrev.length >= 2 && !map[abbrev]) map[abbrev] = code;
+
       map[code] = code;
     }
+
     _subjectCache = map;
     logger.info('Subject map loaded', { count: subjects.length });
     return map;
@@ -351,7 +283,10 @@ async function getSubjectMap() {
 async function fetchLiveWebReg(input) {
   try {
     const trimmed = input.trim();
-    if (/^\d{5}$/.test(trimmed)) return { type: 'index_unsupported' };
+
+    if (/^\d{5}$/.test(trimmed)) {
+      return { type: 'index_unsupported' };
+    }
 
     let subjectCode, courseNum;
     const colonMatch = trimmed.match(/^(?:\d+:)?(\d{3}):(\d{3})$/);
@@ -374,7 +309,9 @@ async function fetchLiveWebReg(input) {
       return { type: 'parse_error', input: trimmed };
     }
 
-    if (!subjectCode) return { type: 'unknown_subject', input: trimmed };
+    if (!subjectCode) {
+      return { type: 'unknown_subject', input: trimmed };
+    }
 
     const url = `https://classes.rutgers.edu//soc/api/courses.json?year=${CURRENT_YEAR}&term=${CURRENT_TERM}&campus=NB&subject=${subjectCode}`;
     const res = await fetch(url);
@@ -382,7 +319,10 @@ async function fetchLiveWebReg(input) {
     const courses = await res.json();
 
     const course = courses.find(c => c.courseNumber === courseNum && c.subject === subjectCode);
-    if (!course) return { type: 'not_found', subjectCode, courseNum };
+
+    if (!course) {
+      return { type: 'not_found', subjectCode, courseNum };
+    }
 
     const sections = (course.sections || []).map(s => ({
       index: s.index,
@@ -404,96 +344,133 @@ async function fetchLiveWebReg(input) {
       credits: course.credits || '?',
       sections,
     };
+
   } catch (err) {
     logger.error('fetchLiveWebReg failed:', err.message);
     return { type: 'error', message: err.message };
   }
 }
 
-// rmp
 
-const RUTGERS_SCHOOL_ID = 'U2Nob29sLTgyNQ=='; // base64("School-825")
-const RMP_URL = 'https://www.ratemyprofessors.com/graphql';
-const RMP_AUTH = 'Basic dGVzdDp0ZXN0';
+// ── RateMyProfessor ───────────────────────────────────────────────────────────
 
-const RMP_QUERY = `
-query SearchTeachers($text: String!, $schoolID: ID) {
-  newSearch {
-    teachers(query: { text: $text, schoolID: $schoolID }) {
-      edges {
-        node {
-          id
-          firstName
-          lastName
-          avgRating
-          avgDifficulty
-          numRatings
-          wouldTakeAgainPercent
-          department
-          teacherRatingTags { tagName tagCount }
-          ratings(first: 5) {
-            edges {
-              node {
-                comment
-                class
-                qualityRating
-                difficultyRatingRounded
-                grade
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}`;
+const RUTGERS_SCHOOL_ID = '825';
 
 /**
- * Queries RateMyProfessor for a single professor name at Rutgers.
- * Returns the best matching CS/engineering result or null if not found.
+ * Decode a RMP professor ID to a plain numeric string for profile URLs.
+ * RMP GraphQL IDs are base64-encoded like "VGVhY2hlci0yNDAzNDc3" → "Teacher-2403477"
  */
-async function queryRmp(professorName) {
+function decodeRmpId(id) {
+  if (!id) return null;
   try {
-    const res = await fetch(RMP_URL, {
-      method: 'POST',
+    const decoded = Buffer.from(id, 'base64').toString('utf8');
+    const match = decoded.match(/Teacher-(\d+)/);
+    if (match) return match[1];
+  } catch (_) {}
+  const directMatch = String(id).match(/Teacher-(\d+)/);
+  if (directMatch) return directMatch[1];
+  if (/^\d+$/.test(String(id))) return String(id);
+  return null;
+}
+
+/**
+ * Search RMP for a professor by last name at Rutgers using HTML scraping.
+ * No API token needed — parses the embedded JSON from the search results page.
+ */
+async function queryRmp(lastName) {
+  if (!lastName || lastName.trim().length < 2) return null;
+  const searchName = lastName.trim();
+
+  try {
+    const url = `https://www.ratemyprofessors.com/search/professors/${RUTGERS_SCHOOL_ID}?q=${encodeURIComponent(searchName)}`;
+    const res = await fetch(url, {
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': RMP_AUTH,
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Referer': `https://www.ratemyprofessors.com/search/professors/825?q=${encodeURIComponent(professorName)}`,
-        'Origin': 'https://www.ratemyprofessors.com',
-        'Accept': '*/*',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-      },
-      body: JSON.stringify({
-        query: RMP_QUERY,
-        variables: { text: professorName, schoolID: RUTGERS_SCHOOL_ID }
-      })
+      }
     });
 
     if (!res.ok) throw new Error(`RMP returned ${res.status}`);
+    const html = await res.text();
 
-    const data = await res.json();
-    const edges = data?.data?.newSearch?.teachers?.edges || [];
-    if (edges.length === 0) return null;
+    // Parse professor data from embedded JSON in the page
+    const matches = [...html.matchAll(/"__typename":"Teacher","id":"([^"]+)","firstName":"([^"]+)","lastName":"([^"]+)","department":(?:"([^"]*?)"|null),"avgRating":([\d.]+),"avgDifficulty":([\d.]+),"numRatings":(\d+),"wouldTakeAgainPercent":([\d.-]+)/g)];
 
-    const profs = edges.map(e => e.node).filter(p => p.numRatings > 0);
-    const csProf = profs.find(p =>
-      p.department?.toLowerCase().includes('computer') ||
-      p.department?.toLowerCase().includes('engineering') ||
-      p.department?.toLowerCase().includes('cs')
+    if (matches.length === 0) return null;
+
+    const profs = matches.map(m => ({
+      id: m[1],
+      firstName: m[2],
+      lastName: m[3],
+      department: m[4] || null,
+      avgRating: parseFloat(m[5]),
+      avgDifficulty: parseFloat(m[6]),
+      numRatings: parseInt(m[7]),
+      wouldTakeAgainPercent: parseFloat(m[8]),
+      teacherRatingTags: [],
+      ratings: { edges: [] }
+    })).filter(p =>
+      p.numRatings > 0 &&
+      p.lastName.toLowerCase() === searchName.toLowerCase()
     );
 
+    if (profs.length === 0) return null;
+
+    // Prefer CS/engineering department, fall back to most-rated exact match
+    const csProf = profs.find(p => {
+      const dept = (p.department || '').toLowerCase();
+      return dept.includes('computer') || dept.includes('cs') ||
+             dept.includes('engineering') || dept.includes('information') ||
+             dept.includes('math') || dept.includes('statistic');
+    });
+
     return csProf || profs.sort((a, b) => b.numRatings - a.numRatings)[0] || null;
+
   } catch (err) {
-    logger.error(`queryRmp failed for "${professorName}":`, err.message);
+    logger.error(`queryRmp failed for "${searchName}":`, err.message);
     return null;
   }
 }
 
 /**
+ * Primary lookup: check professor_reviews Supabase table first (seeded data),
+ * then fall back to live RMP query if not found.
+ * 
+ * This gives us:
+ * - Fast, reliable results for known CS professors (from seed)
+ * - Live fallback for new or unseeded professors
+ * - Correct professor matching (seeded data is pre-verified)
+ */
+async function lookupProfessor(lastName) {
+  // Step 1: try seeded professor_reviews table
+  try {
+    const { data, error } = await getSupabase()
+      .from('professor_reviews')
+      .select('content, metadata')
+      .ilike('metadata->>last_name', lastName)
+      .limit(1)
+      .single();
+
+    if (!error && data) {
+      logger.info('Professor found in seeded data', { lastName });
+      return { source: 'seeded', content: data.content, metadata: data.metadata };
+    }
+  } catch (_) {}
+
+  // Step 2: fall back to live RMP query
+  logger.info('Professor not in seed, querying RMP live', { lastName });
+  const rmpData = await queryRmp(lastName);
+  if (rmpData) {
+    return { source: 'live', rmpData };
+  }
+
+  return null;
+}
+
+/**
  * Given a course code, fetches WebReg sections, extracts instructors,
- * and queries RMP for each one.
+ * and looks up each one via seeded data or live RMP.
  */
 async function fetchRmpForCourse(courseInput) {
   const webregResult = await fetchLiveWebReg(courseInput);
@@ -509,21 +486,23 @@ async function fetchRmpForCourse(courseInput) {
 
   if (instructorNames.length === 0) return { webregResult, rmpResults: [] };
 
-  // WebReg names are usually "LAST, FIRST" — extract last name for RMP search
   const rmpResults = await Promise.all(
     instructorNames.map(async (fullName) => {
+      // Parse last name: "TJANG, ANDREW" → "TJANG", "CENTENO" → "CENTENO"
       const lastName = fullName.includes(',')
         ? fullName.split(',')[0].trim()
         : fullName.split(' ')[0].trim();
-      const rmpData = await queryRmp(lastName);
-      return { instructor: fullName, lastName, rmpData };
+
+      const result = await lookupProfessor(lastName);
+      return { instructor: fullName, lastName, result };
     })
   );
 
   return { webregResult, rmpResults };
 }
 
-// exports
+
+// ── Exports ───────────────────────────────────────────────────────────────────
 
 module.exports = {
   searchCourseCatalog,
@@ -532,14 +511,12 @@ module.exports = {
   formatDegreeRequirementsContext,
   searchWebReg,
   formatWebRegContext,
+  searchRoadmaps,
+  formatRoadmapContext,
   getMajorImage,
   findOccupation,
   getMajorAutocomplete,
   fetchLiveWebReg,
   fetchRmpForCourse,
-  getRoadmapMode,
-  getRoadmapBySemester,
-  getRoadmapBySection,
-  getRoadmapMajorAutocomplete,
-  getRoadmapSectionAutocomplete
+  decodeRmpId,
 };

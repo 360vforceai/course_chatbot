@@ -13,16 +13,13 @@ const {
   formatDegreeRequirementsContext,
   searchWebReg,
   formatWebRegContext,
+  searchRoadmaps,
+  formatRoadmapContext,
   getMajorImage,
   findOccupation,
   getMajorAutocomplete,
   fetchLiveWebReg,
   fetchRmpForCourse,
-  getRoadmapMode,
-  getRoadmapBySemester,
-  getRoadmapBySection,
-  getRoadmapMajorAutocomplete,
-  getRoadmapSectionAutocomplete,
 } = require('../agents/courseClient');
 const logger = require('../utils/logger');
 
@@ -37,7 +34,7 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000);
 
-// Shared helper: send chunks back to Discord 
+// ── Shared helper: send chunks back to Discord ────────────────────────────────
 
 async function sendChunks(interaction, content) {
   const chunks = splitMessage(content);
@@ -57,7 +54,7 @@ async function sendChunks(interaction, content) {
   }
 }
 
-// Shared helper: run RAG + getResponse for a question string 
+// ── Shared helper: run RAG + getResponse for a question string ────────────────
 
 async function runAdvisor(userId, username, question) {
   const shortTermHistory = await getShortTermHistory(userId);
@@ -70,6 +67,7 @@ async function runAdvisor(userId, username, question) {
     courseCatalogResults,
     degreeRequirementResults,
     webregResults,
+    roadmapResults
   ] = await Promise.all([
     tables.includes('community_memory')
       ? searchLongTermMemories(keywords)
@@ -86,6 +84,10 @@ async function runAdvisor(userId, username, question) {
     tables.includes('webreg')
       ? searchWebReg(keywords)
       : Promise.resolve([]),
+
+    tables.includes('course_roadmaps')
+      ? searchRoadmaps(keywords)
+      : Promise.resolve([])
   ]);
 
   const ragContext = memories.length > 0
@@ -98,11 +100,13 @@ async function runAdvisor(userId, username, question) {
   const courseCatalogContext = formatCourseCatalogContext(courseCatalogResults);
   const degreeRequirementsContext = formatDegreeRequirementsContext(degreeRequirementResults);
   const webregContext = formatWebRegContext(webregResults);
+  const roadmapContext = formatRoadmapContext(roadmapResults);
 
   if (ragContext) logger.info('RAG injected community memory', { userId, count: memories.length });
   if (courseCatalogContext) logger.info('RAG injected course catalog', { userId, count: courseCatalogResults.length });
   if (degreeRequirementsContext) logger.info('RAG injected degree requirements', { userId, count: degreeRequirementResults.length });
   if (webregContext) logger.info('RAG injected webreg', { userId, count: webregResults.length });
+  if (roadmapContext) logger.info('RAG injected roadmaps', { userId, count: roadmapResults.length });
 
   const messages = [...shortTermHistory, { role: 'user', content: question }];
 
@@ -111,14 +115,16 @@ async function runAdvisor(userId, username, question) {
     courseCatalogContext,
     degreeRequirementsContext,
     webregContext,
+    roadmapContext,
     keywords
   });
 
   saveMemoryAsync(userId, username, question, content, embedding);
+
   return content;
 }
 
-// /ask 
+// ── /ask ──────────────────────────────────────────────────────────────────────
 
 async function handleAsk(interaction, userId, username) {
   const question = interaction.options.getString('question');
@@ -133,161 +139,25 @@ async function handleAsk(interaction, userId, username) {
 }
 
 // ── /roadmap ──────────────────────────────────────────────────────────────────
-// Resolves the right image based on major mode (semester vs picker),
-// optionally sends it to OpenAI with the user's question.
 
 async function handleRoadmap(interaction, userId, username) {
-  const majorRaw  = interaction.options.getString('major');   // may be "Data Science||CS"
-  const semStr    = interaction.options.getString('semester'); // '1'–'8' or null
-  const future    = interaction.options.getString('future');  // 'yes'|'no'|null
-  const section   = interaction.options.getString('section'); // picker label or null
-  const question  = interaction.options.getString('question');// optional free text
+  const completed = interaction.options.getString('completed');
+  const goal = interaction.options.getString('goal');
+  const semesters = interaction.options.getString('semesters') || 'not specified';
 
-  if (!majorRaw) {
-    await interaction.editReply('Please select a major from the dropdown.');
-    return;
-  }
+  const question =
+    `Generate a semester-by-semester course roadmap for a Rutgers CS student. ` +
+    `Completed courses: ${completed}. ` +
+    `Career goal / track: ${goal}. ` +
+    `Semesters remaining: ${semesters}. ` +
+    `Account for prereq chains, difficulty balance, and degree requirements.`;
 
-  // Split pipe-delimited value back into major + track
-  const [major, track] = majorRaw.includes('||')
-    ? majorRaw.split('||')
-    : [majorRaw, null];
-
-  // 1. Determine mode from DB
-  logger.info('Roadmap debug', { majorRaw, major, track });
-  const mode = await getRoadmapMode(major, track);
-  logger.info('Roadmap mode', { mode });
-
-  if (!mode) {
-    await interaction.editReply(`No roadmap data found for **${major}${track ? ` — ${track}` : ''}**. Try a different major.`);
-    return;
-  }
-
-  let imageRow = null;
-
-  // ── Semester-based path ──────────────────────────────────────────────────
-  if (mode === 'semester') {
-    if (!semStr) {
-      await interaction.editReply(
-        `**${major}** uses a semester-by-semester roadmap. Please fill in the **semester** option (1–8).`
-      );
-      return;
-    }
-
-    let semNum = parseInt(semStr, 10);
-
-    // If user wants next semester, bump by 1 (cap at 8)
-    if (future === 'yes') {
-      semNum = Math.min(semNum + 1, 8);
-    }
-
-    imageRow = await getRoadmapBySemester(major, semNum, track);
-
-    if (!imageRow) {
-      await interaction.editReply(`Couldn't find semester ${semNum} for **${major}${track ? ` — ${track}` : ''}**.`);
-      return;
-    }
-  }
-
-  // ── Picker-based path ────────────────────────────────────────────────────
-  if (mode === 'picker') {
-    if (!section) {
-      // Tell user what sections are available instead of silently failing
-      const available = await getRoadmapSectionAutocomplete(majorRaw, '');
-      const list = available.map((s) => `• ${s.name}`).join('\n');
-      await interaction.editReply(
-        `**${major}** doesn't use semester numbers — please fill in the **section** option.\n\nAvailable sections:\n${list}`
-      );
-      return;
-    }
-
-    imageRow = await getRoadmapBySection(major, section);
-
-    if (!imageRow) {
-      await interaction.editReply(`Couldn't find the **${section}** image for **${major}**.`);
-      return;
-    }
-  }
-
-  // ── Build the embed ──────────────────────────────────────────────────────
-  const embed = {
-    title: imageRow.label,
-    image: { url: imageRow.image_url },
-    color: 0x5865F2,
-    footer: question
-      ? { text: 'Sending your question to the advisor…' }
-      : { text: 'Rutgers Academic Advisor · /roadmap' }
-  };
-
-  await interaction.editReply({ embeds: [embed] });
-
-  // ── Optional AI question with image context ──────────────────────────────
-  if (question) {
-    try {
-      // Fetch the image as base64 so it can be sent to the vision model
-      const imgRes  = await fetch(imageRow.image_url);
-      const imgBuf  = await imgRes.arrayBuffer();
-      const b64     = Buffer.from(imgBuf).toString('base64');
-      const mimeType = imgRes.headers.get('content-type') || 'image/png';
-
-      const { getClient } = require('../agents/aiClient');
-      const openai = getClient();
-
-      const aiRes = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        max_tokens: 1024,
-        messages: [
-          {
-            role: 'system',
-            content:
-              'You are a helpful Rutgers University academic advisor. ' +
-              'The student has shared their degree roadmap image. ' +
-              'Answer their question using the course information visible in the image. ' +
-              'Be specific — reference course codes, semester order, and prereq chains. ' +
-              'Never invent course data not visible in the image.' +
-              'Do not ask follow up questions.'
-          },
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'image_url',
-                image_url: {
-                  url: `data:${mimeType};base64,${b64}`
-                }
-              },
-              {
-                type: 'text',
-                text: question
-              }
-            ]
-          }
-        ]
-      });
-
-      const answer = aiRes.choices[0]?.message?.content?.trim();
-      if (answer) {
-        const chunks = splitMessage(answer);
-        for (const chunk of chunks) {
-          await interaction.followUp({ content: chunk });
-        }
-      }
-
-      // Persist to short-term memory so /ask follows on naturally
-      saveMemoryAsync(userId, username, question, answer || '', null);
-
-    } catch (err) {
-      logger.error('Roadmap vision call failed:', err.message);
-      await interaction.followUp({
-        content: '⚠️ Couldn\'t process your question right now. Try `/ask` for follow-up questions.',
-      });
-    }
-  }
-
-  logger.info('Handled /roadmap', { userId, username, major, mode, section, semStr, future, hasQuestion: !!question });
+  const content = await runAdvisor(userId, username, question);
+  await sendChunks(interaction, content);
+  logger.info('Handled /roadmap', { userId, username, goal });
 }
 
-//  /search 
+// ── /search ───────────────────────────────────────────────────────────────────
 
 async function handleSearch(interaction, userId, username) {
   const course = interaction.options.getString('course');
@@ -307,7 +177,7 @@ async function handleSearch(interaction, userId, username) {
   logger.info('Handled /search', { userId, username, course });
 }
 
-//  /snipe 
+// ── /snipe ────────────────────────────────────────────────────────────────────
 
 async function handleSnipe(interaction, userId, username) {
   const course = interaction.options.getString('course');
@@ -368,7 +238,7 @@ async function handleSnipe(interaction, userId, username) {
   logger.info('Handled /snipe', { userId, username, course, openSections: openSections.length });
 }
 
-//  /rmp 
+// ── /rmp ─────────────────────────────────────────────────────────────────────
 // Chains: WebReg (get instructors) → RateMyProfessor (get ratings)
 
 async function handleRmp(interaction, userId, username) {
@@ -402,8 +272,9 @@ async function handleRmp(interaction, userId, username) {
     return;
   }
 
-  const fields = rmpResults.map(({ instructor, lastName, rmpData }) => {
-    if (!rmpData) {
+  const fields = rmpResults.map(({ instructor, lastName, result }) => {
+    // No result from either seeded data or live RMP
+    if (!result) {
       return {
         name: `👤 ${instructor}`,
         value: `No RateMyProfessor profile found. Try searching [manually](https://www.ratemyprofessors.com/search/professors/825?q=${encodeURIComponent(lastName)}).`,
@@ -411,6 +282,36 @@ async function handleRmp(interaction, userId, username) {
       };
     }
 
+    // Seeded result — content is pre-formatted text, show it directly
+    if (result.source === 'seeded') {
+      const meta = result.metadata || {};
+      const rating = meta.avg_rating?.toFixed(1) ?? 'N/A';
+      const difficulty = meta.avg_difficulty?.toFixed(1) ?? 'N/A';
+      const numRatings = meta.num_ratings ?? 0;
+      const ratingEmoji = (meta.avg_rating >= 4) ? '🟢' : (meta.avg_rating >= 3) ? '🟡' : '🔴';
+      const profName = `${meta.first_name || ''} ${meta.last_name || ''}`.trim() || instructor;
+      const rmpLink = `https://www.ratemyprofessors.com/search/professors/825?q=${encodeURIComponent(meta.last_name || lastName)}`;
+
+      // Parse tags and comment from the stored content string
+      const tagMatch = result.content.match(/Tags: ([^\n]+)/);
+      const commentMatch = result.content.match(/Student comments: "([^"]+)"/);
+      const tags = tagMatch ? tagMatch[1] : '';
+      const commentLine = commentMatch ? `\n> "${commentMatch[1].slice(0, 150)}${commentMatch[1].length > 150 ? '...' : ''}"` : '';
+
+      return {
+        name: `${ratingEmoji} ${profName} (WebReg: ${instructor}) *(from database)*`,
+        value: [
+          `**Rating:** ${rating}/5 · **Difficulty:** ${difficulty}/5 *(${numRatings} ratings)*`,
+          tags ? `**Tags:** ${tags}` : '',
+          commentLine,
+          `[Search on RMP](${rmpLink})`
+        ].filter(Boolean).join('\n'),
+        inline: false
+      };
+    }
+
+    // Live RMP result
+    const rmpData = result.rmpData;
     const name = `${rmpData.firstName} ${rmpData.lastName}`;
     const rating = rmpData.avgRating?.toFixed(1) ?? 'N/A';
     const difficulty = rmpData.avgDifficulty?.toFixed(1) ?? 'N/A';
@@ -434,7 +335,17 @@ async function handleRmp(interaction, userId, username) {
       ? `\n> "${topComment.comment.trim().slice(0, 150)}${topComment.comment.length > 150 ? '...' : ''}"`
       : '';
 
-    const rmpLink = `https://www.ratemyprofessors.com/professor/${rmpData.id.replace('Teacher-', '')}`;
+    // Decode base64 RMP ID to get numeric profile ID
+    let rmpNumericId = rmpData.id;
+    try {
+      const decoded = Buffer.from(rmpData.id, 'base64').toString('utf8');
+      const m = decoded.match(/Teacher-(\d+)/);
+      if (m) rmpNumericId = m[1];
+    } catch (_) {
+      const m = String(rmpData.id).match(/Teacher-(\d+)/);
+      if (m) rmpNumericId = m[1];
+    }
+    const rmpLink = `https://www.ratemyprofessors.com/professor/${rmpNumericId}`;
 
     return {
       name: `${ratingEmoji} ${name} (WebReg: ${instructor})`,
@@ -449,8 +360,11 @@ async function handleRmp(interaction, userId, username) {
   });
 
   const bestRating = rmpResults
-    .filter(r => r.rmpData)
-    .reduce((max, r) => Math.max(max, r.rmpData.avgRating || 0), 0);
+    .filter(r => r.result?.source === 'live' ? r.result.rmpData?.avgRating : r.result?.metadata?.avg_rating)
+    .reduce((max, r) => {
+      const val = r.result?.source === 'live' ? r.result.rmpData?.avgRating : r.result?.metadata?.avg_rating;
+      return Math.max(max, val || 0);
+    }, 0);
   const color = bestRating >= 4 ? 0x57F287 : bestRating >= 3 ? 0xFEE75C : 0xED4245;
 
   const embed = {
@@ -466,7 +380,7 @@ async function handleRmp(interaction, userId, username) {
   logger.info('Handled /rmp', { userId, username, courseInput, instructors: rmpResults.length });
 }
 
-//  /tree 
+// ── /tree ─────────────────────────────────────────────────────────────────────
 
 async function handleTree(interaction) {
   const major = interaction.options.getString('major');
@@ -489,7 +403,7 @@ async function handleTree(interaction) {
   logger.info('Handled /tree', { major });
 }
 
-//  /career 
+// ── /career ───────────────────────────────────────────────────────────────────
 
 async function handleCareer(interaction, userId, username) {
   const goal = interaction.options.getString('goal');
@@ -524,7 +438,7 @@ async function handleCareer(interaction, userId, username) {
   logger.info('Handled /career', { userId, username, goal, majors: occupation.recommended_majors });
 }
 
-// /help 
+// ── /help ─────────────────────────────────────────────────────────────────────
 
 async function handleHelp(interaction) {
   const helpText = [
@@ -548,40 +462,22 @@ async function handleHelp(interaction) {
   logger.info('Handled /help');
 }
 
-// Autocomplete dispatcher 
+// ── Autocomplete dispatcher ───────────────────────────────────────────────────
 
 async function handleAutocomplete(interaction) {
-  const { commandName } = interaction;
-  const focused = interaction.options.getFocused(true); // { name, value }
-
-  // /tree — major field
-  if (commandName === 'tree' && focused.name === 'major') {
-    const suggestions = await getMajorAutocomplete(focused.value);
-    await interaction.respond(suggestions).catch(() => {});
-    return;
+  if (interaction.commandName === 'tree') {
+    try {
+      const focused = interaction.options.getFocused();
+      const suggestions = await getMajorAutocomplete(focused);
+      await interaction.respond(suggestions);
+    } catch (err) {
+      logger.error('handleTreeAutocomplete failed:', err.message);
+      await interaction.respond([]).catch(() => {});
+    }
   }
-
-  // /roadmap — major field
-  if (commandName === 'roadmap' && focused.name === 'major') {
-    const suggestions = await getRoadmapMajorAutocomplete(focused.value);
-    await interaction.respond(suggestions).catch(() => {});
-    return;
-  }
-
-  // /roadmap — section field (depends on which major is already chosen)
-  if (commandName === 'roadmap' && focused.name === 'section') {
-    // Read the already-typed major value from the other option
-    const majorValue = interaction.options.getString('major') || '';
-    const suggestions = await getRoadmapSectionAutocomplete(majorValue, focused.value);
-    await interaction.respond(suggestions).catch(() => {});
-    return;
-  }
-
-  // fallback — respond with empty so Discord doesn't show an error
-  await interaction.respond([]).catch(() => {});
 }
 
-// Main dispatcher 
+// ── Main dispatcher ───────────────────────────────────────────────────────────
 
 async function handleInteraction(interaction) {
   // FIX: handle autocomplete BEFORE isChatInputCommand check —

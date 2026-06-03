@@ -34,7 +34,7 @@ const MODEL = 'gpt-4o-mini';
 
 const TOOLS = [];
 
-// made a fix: only suggest /tree when the response is specifically about choosing or
+// FIX: only suggest /tree when the response is specifically about choosing or
 // comparing degree programs — not just any mention of a major name in passing.
 const TREE_TRIGGER_PHRASES = [
   'major in',
@@ -188,7 +188,7 @@ Output ONLY valid JSON, no explanation, no markdown fences.`;
 
 async function getRouterDecision(shortTermHistory, question) {
   const fallback = {
-    tables: ['course_catalog', 'degree_requirements', 'roadmaps'],
+    tables: ['course_catalog', 'degree_requirements', 'course_roadmaps'],
     keywords: question
   };
 
@@ -219,7 +219,7 @@ async function getRouterDecision(shortTermHistory, question) {
     const raw = response.choices[0]?.message?.content?.trim() || '';
     const parsed = JSON.parse(raw);
 
-    const validTables = ['course_catalog', 'degree_requirements', 'webreg', 'roadmaps'];
+    const validTables = ['course_catalog', 'degree_requirements', 'webreg', 'course_roadmaps'];
     const tables = Array.isArray(parsed.tables)
       ? parsed.tables.filter((t) => validTables.includes(t))
       : fallback.tables;
