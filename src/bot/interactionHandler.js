@@ -655,11 +655,17 @@ async function handleSession(interaction, userId, username) {
       logger.error('Session summary generation failed:', err.message);
     }
 
-    const chunks = splitMessage(`📋 **Session Summary**\n\n${summary}`);
-    await interaction.editReply(chunks[0]);
-    for (let i = 1; i < chunks.length; i++) {
-      await interaction.followUp({ content: chunks[i] });
-    }
+    await interaction.editReply({
+      embeds: [{
+        color: 0x5865F2,
+        title: '📋 Session Summary',
+        description: summary,
+        footer: {
+          text: `Session topic: ${session.topic} · ${messages.length / 2} exchanges`
+        },
+        timestamp: new Date().toISOString()
+      }]
+    });
 
     logger.info('Session ended', { userId, messageCount: messages.length });
   }
@@ -691,8 +697,6 @@ async function handleHelp(interaction) {
 }
 
 // ── Autocomplete dispatcher ───────────────────────────────────────────────────
-
-// Autocomplete dispatcher 
 
 async function handleAutocomplete(interaction) {
   const { commandName } = interaction;
