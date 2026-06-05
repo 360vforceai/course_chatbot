@@ -555,7 +555,9 @@ async function handleCareer(interaction, userId, username) {
 
   Only rank the majors listed above.
 
-  For each major provide a 1-2 sentence explanation of why it fits the career goal, salary range, one recommended minor, and one recommended double major. Keep the entire response under 1000 characters total. Be concise.
+  The user may have searched for a slightly different role than the matched occupation. Use your own knowledge to determine the best Rutgers-New Brunswick majors for their actual goal of "${goal}".
+
+  For each major provide a 1-2 sentence explanation of why it fits the career goal, salary range, 1-3 recommended minor, and one 1-3 recommended double major. Keep the entire response under 1000 characters total. Be concise.
 
   At the end, add: "Want to see the full degree tree? Use /tree and select [top major]."
 

@@ -309,16 +309,12 @@ async function getMajorAutocomplete(query) {
 
 async function findOccupation(goal) {
   try {
-
     const normalizedGoal = goal?.trim();
-    
     if (!normalizedGoal) return null;
 
-    logger.info('Searching occupations', {
-    goal: normalizedGoal
-    });
+    logger.info('Searching occupations', { goal: normalizedGoal });
 
-    // Exact match first
+    // exact match first
     let { data } = await getSupabase()
       .from('occupations')
       .select('*')
@@ -327,23 +323,37 @@ async function findOccupation(goal) {
 
     if (data?.length) return data[0];
 
-    // Partial match second
+    // partial match second
     ({ data } = await getSupabase()
       .from('occupations')
       .select('*')
-      .ilike('occupation',`%${normalizedGoal}%`)
+      .ilike('occupation', `%${normalizedGoal}%`)
       .limit(1));
 
     if (data?.length) return data[0];
 
+    // semantic match — embed the goal and find the closest occupation
+    const embedding = await getEmbedding(normalizedGoal);
+    const { data: semanticData, error } = await getSupabase().rpc('match_occupations', {
+      query_embedding: embedding,
+      match_threshold: 0.3,
+      match_count: 1
+    });
+
+    if (error) throw error;
+    if (semanticData?.length) {
+      logger.info('Occupation matched via semantic search', {
+        goal: normalizedGoal,
+        matched: semanticData[0].occupation
+      });
+      return semanticData[0];
+    }
+
     return null;
-  }
-
-  catch (err) {
-    
-  logger.error('findOccupation failed:', err.message);
-  return null;
-
+  } 
+    catch (err) {
+    logger.error('findOccupation failed:', err.message);
+    return null;
   }
 }
 
