@@ -132,6 +132,28 @@ const commands = [
     ]
   },
   {
+    name: 'session',
+    description: 'Start or end an advising session',
+    options: [
+      {
+        name: 'action',
+        type: 3,
+        description: 'Start or end your session',
+        required: true,
+        choices: [
+          { name: 'Start session', value: 'start' },
+          { name: 'End session + get summary', value: 'end' }
+        ]
+      },
+      {
+        name: 'topic',
+        type: 3,
+        description: 'What are you focusing on? (e.g. planning junior year)',
+        required: false
+      }
+    ]
+  },
+  {
     name: 'help',
     description: 'Show all available commands',
     options: []
