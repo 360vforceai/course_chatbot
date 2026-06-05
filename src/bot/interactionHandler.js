@@ -104,7 +104,6 @@ async function runAdvisor(userId, username, question) {
   if (courseCatalogContext) logger.info('RAG injected course catalog', { userId, count: courseCatalogResults.length });
   if (degreeRequirementsContext) logger.info('RAG injected degree requirements', { userId, count: degreeRequirementResults.length });
   if (webregContext) logger.info('RAG injected webreg', { userId, count: webregResults.length });
-  if (roadmapContext) logger.info('RAG injected roadmaps', { userId, count: roadmapResults.length });
 
   const messages = [...shortTermHistory, { role: 'user', content: question }];
 
@@ -556,14 +555,12 @@ async function handleCareer(interaction, userId, username) {
 
   Only rank the majors listed above.
 
-  For each major explain:
-  - Why it fits
-  - Common occupations
-  - Salary outlook
-  - Recommended minors or double majors
+  For each major provide a 1-2 sentence explanation of why it fits the career goal, salary range, one recommended minor, and one recommended double major. Keep the entire response under 1000 characters total. Be concise.
+
+  At the end, add: "Want to see the full degree tree? Use /tree and select [top major]."
 
   IMPORTANT:
-  Only recommend Rutgers-New Brunswick majors, minors, certificates, or concentrations that actually exist. Do not invent programs.
+  Only recommend Rutgers-New Brunswick majors, minors, certificates, or concentrations that actually exist. Do not invent programs. Cybersecurity is NOT a minor at Rutgers-New Brunswick just a certificate.
   `;
 
   const content = await runAdvisor(userId, username, question);
