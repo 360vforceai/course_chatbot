@@ -432,7 +432,7 @@ async function handleRmp(interaction, userId, username) {
       const commentLine = commentMatch ? `\n> "${commentMatch[1].slice(0, 150)}${commentMatch[1].length > 150 ? '...' : ''}"` : '';
 
       return {
-        name: `${ratingEmoji} ${profName} (WebReg: ${instructor}) *(from database)*`,
+        name: `${ratingEmoji} ${profName} (WebReg: ${instructor})`,
         value: [
           `**Rating:** ${rating}/5 · **Difficulty:** ${difficulty}/5 *(${numRatings} ratings)*`,
           tags ? `**Tags:** ${tags}` : '',
