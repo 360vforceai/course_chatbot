@@ -120,7 +120,7 @@ const commands = [
     ]
   },
   {
-    name: 'career',
+    name: 'major',
     description: 'Find majors that match a career goal',
     options: [
       {
@@ -153,6 +153,18 @@ const commands = [
       }
     ]
   },
+  {
+  name: 'career',
+  description: 'Find careers that match a Rutgers major',
+  options: [
+    {
+      name: 'major',
+      type: 3,
+      description: 'Your major (e.g. Computer Science, Mathematics, Biology)',
+      required: true
+    }
+  ]
+},
   {
     name: 'help',
     description: 'Show all available commands',

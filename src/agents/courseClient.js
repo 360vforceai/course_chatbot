@@ -626,6 +626,25 @@ async function fetchRmpForCourse(courseInput) {
   return { webregResult, rmpResults };
 }
 
+async function findCareersByMajor(major) {
+  try {
+    const normalizedMajor = major?.trim();
+    if (!normalizedMajor) return [];
+
+    const { data, error } = await getSupabase()
+      .from('occupations')
+      .select('occupation, recommended_majors')
+      .ilike('recommended_majors', `%${normalizedMajor}%`)
+      .limit(20);
+
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    logger.error('findCareersByMajor failed:', err.message);
+    return [];
+  }
+}
+
 
 // ── Exports ───────────────────────────────────────────────────────────────────
 
@@ -646,5 +665,6 @@ module.exports = {
   getRoadmapBySemester,
   getRoadmapBySection,
   getRoadmapMajorAutocomplete,
+   findCareersByMajor,
   getRoadmapSectionAutocomplete
 };

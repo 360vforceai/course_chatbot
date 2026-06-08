@@ -24,6 +24,7 @@ const {
   getRoadmapBySection,
   getRoadmapMajorAutocomplete,
   getRoadmapSectionAutocomplete,
+  findCareersByMajor,
 } = require('../agents/courseClient');
 const logger = require('../utils/logger');
 
@@ -535,9 +536,9 @@ async function handleTree(interaction) {
   logger.info('Handled /tree', { major });
 }
 
-// ── /career ───────────────────────────────────────────────────────────────────
+// ── /major ───────────────────────────────────────────────────────────────────
 
-async function handleCareer(interaction, userId, username) {
+async function handleMajor(interaction, userId, username) {
   const goal = interaction.options.getString('goal');
   const occupation = await findOccupation(goal);
 
@@ -569,6 +570,38 @@ async function handleCareer(interaction, userId, username) {
   await sendChunks(interaction, content);
   logger.info('Handled /career', { userId, username, goal, majors: occupation.recommended_majors });
 }
+// ── /career ───────────────────────────────────────────────────────────────────
+
+async function handleCareer(interaction, userId, username) {
+  const major = interaction.options.getString('major');
+
+  const careers = await findCareersByMajor(major);
+
+  const careerList = careers.length > 0
+    ? careers.map(c => c.occupation).join(', ')
+    : 'No direct matches found — using general knowledge.';
+
+  const question = `Major: ${major}
+
+Careers found in database: ${careerList}
+
+Based on the careers listed above and your own knowledge, what are the top career paths for a Rutgers student graduating with a ${major} degree? 
+
+For each career provide a 1 sentence explanation of fit and salary range. List at most 6 careers. Keep the entire response under 800 characters. Be concise.
+
+IMPORTANT: Only recommend real careers. Do not invent job titles.`;
+
+  const content = await runAdvisor(userId, username, question);
+  await sendChunks(interaction, content);
+  logger.info('Handled /career', { userId, username, major, careersFound: careers.length });
+}
+
+
+
+
+
+
+
 
 // ── /session ───────────────────────────────────────────────────────────────────
 
@@ -681,7 +714,8 @@ async function handleHelp(interaction) {
     '`/search <course>` — Look up a specific course by name or code (e.g. CS 344, "algorithms").',
     '`/snipe <course>` — Check WebReg seat availability and learn how to snipe open seats.',
     '`/rmp <course>` — Look up RateMyProfessor ratings for professors teaching a course this semester.',
-    '`/career <goal>` — Find the Rutgers majors that best match a career goal.',
+    '`/major <goal>` — Find the Rutgers majors that best match a career goal.',
+    '`/career <major>` — Find careers that match your Rutgers major.',
     '`/tree [major]` — Provide a major, returns a tree for which courses to take in a tree structure.',
     '`/session [action] <topic>` — Start a session with the bot and end it with a summary.', 
     '`/help` — Show this message.',
@@ -741,7 +775,7 @@ async function handleInteraction(interaction) {
   if (!interaction.isChatInputCommand()) return;
 
   const { commandName } = interaction;
-  const validCommands = ['ask', 'roadmap', 'search', 'snipe', 'rmp', 'tree', 'career', 'session', 'help'];
+  const validCommands = ['ask', 'roadmap', 'search', 'snipe', 'rmp', 'tree', 'major','career', 'session', 'help'];
   if (!validCommands.includes(commandName)) return;
 
   const userId = interaction.user.id;
@@ -779,7 +813,8 @@ async function handleInteraction(interaction) {
     if (commandName === 'snipe')   await handleSnipe(interaction, userId, username);
     if (commandName === 'rmp')     await handleRmp(interaction, userId, username);
     if (commandName === 'tree')    await handleTree(interaction);
-    if (commandName === 'career')  await handleCareer(interaction, userId, username);
+    if (commandName === 'major')  await handleMajor(interaction, userId, username);
+    if (commandName === 'career') await handleCareer(interaction, userId, username);
     if (commandName === 'session') await handleSession(interaction, userId, username);
     if (commandName === 'help')    await handleHelp(interaction);
   } catch (err) {
