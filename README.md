@@ -72,26 +72,31 @@ npm start
 
 ## Project Structure
 
+```
 src/
-bot/
-index.js                # Discord client setup and event listeners
-registerCommands.js     # Slash command registration via Discord REST API
-interactionHandler.js   # All command handlers and autocomplete dispatcher
-agents/
-aiClient.js             # OpenAI client, router agent, response generator
-courseClient.js         # Supabase queries, WebReg API, RMP scraper
-utils/
-logger.js               # Structured logger with log levels
-memoryService.js        # Short-term and long-term memory (Supabase)
-messageUtils.js         # Discord message chunking (2000 char limit)
-rateLimiter.js          # Per-user 5-second cooldown
-sessionStore.js         # In-memory session tracking for /session
+  bot/           # Discord client, command registration, interaction handling
+    index.js                # Discord client setup and event listeners
+    registerCommands.js     # Slash command registration via Discord REST API
+    interactionHandler.js   # All command handlers and autocomplete dispatcher
+  agents/
+    aiClient.js             # OpenAI client, router agent, response generator
+    courseClient.js         # Supabase queries, WebReg API, RMP scraper
+  utils/
+    logger.js               # Structured logger with log levels
+    memoryService.js        # Short-term and long-term memory (Supabase)
+    messageUtils.js         # Discord message chunking (2000 char limit)
+    rateLimiter.js          # Per-user 5-second cooldown
+    sessionStore.js         # In-memory session tracking for /session
+  scripts/
+    importProfessors.js     # Imports rutgers_professors_with_courses.csv into the table in database
+```
 
 ## Architecture
 
 The bot uses a **router agent** pattern — every `/ask` question is first routed through a lightweight GPT-4o-mini call that decides which Supabase tables to query and generates optimized search keywords. Results are retrieved via vector similarity search (pgvector) and injected as context before the main response is generated.
 
 **Request flow for `/ask`:**
+```
 User question
 → Router agent (decides tables + keywords)
 → Parallel RAG search (course_catalog, degree_requirements, webreg)
@@ -99,6 +104,7 @@ User question
 → GPT-4o-mini response
 → Save to short-term + long-term memory
 → Discord reply
+```
 
 **`/snipe` and `/rmp`** bypass RAG entirely and hit the Rutgers SOC API and RateMyProfessor directly for live data.
 
